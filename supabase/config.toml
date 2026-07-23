@@ -1,0 +1,12 @@
+# Projeto Supabase de PRODUÇÃO deste app — COMPARTILHADO (S2) com o
+# faturamento-concrem-main (mesmo auth.users / mesmo banco).
+# ⚠️ Banco compartilhado: NÃO aplicar migrations via `supabase db push` (o
+# lineage diverge do faturamento). Aplicar o SQL de segurança pelo SQL Editor,
+# de forma coordenada. Ver CLAUDE.md.
+project_id = "ctntlgvoefdbjxvfkahp"
+
+# Edge Function administrativa (CRUD de usuários do classificador). A partir da
+# migração para Supabase Auth, exige JWT do Supabase Auth e revalida is_admin
+# dentro da função. verify_jwt = true faz o gateway rejeitar chamadas sem JWT.
+[functions.usuarios]
+verify_jwt = true
