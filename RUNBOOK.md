@@ -1,0 +1,140 @@
+# RUNBOOK — Aplicação da arquitetura de segurança
+
+Passo a passo para colocar a segurança em produção **sem derrubar o app nem o
+portal do representante**. Leia tudo antes de começar.
+
+## Contexto e regras
+- **Banco Supabase COMPARTILHADO (S2):** projeto `ctntlgvoefdbjxvfkahp`, o mesmo do
+  `faturamento-concrem-main` (mesmo `auth.users`).
+- **NÃO** use `supabase db push` — aplique o SQL pelo **SQL Editor**, coordenado.
+- **NÃO** altere tabelas do faturamento (`concrem_usuarios`, `concrem_grupos`, `usuarios`).
+- **Ordem importa:** fechar a escrita `anon` (Fase 3) **antes** do frontend novo estar no ar
+  e do adailton vinculado faz a Classificação parar de salvar. Por isso a Fase 3 e o corte
+  do frontend acontecem juntos, numa janela curta.
+- **Reversão:** a única reversão do passo destrutivo é restaurar backup/PITR. Confirme o
+  backup antes da Etapa C.
+
+---
+
+## Etapa A — seguro a qualquer momento (não quebra nada)
+
+### A1. Backup
+No painel do projeto `ctntlgvoefdbjxvfkahp`, confirme **PITR ou snapshot recente**.
+Sem backup verificado, **não** siga para as Etapas C/Fase 3.
+
+### A2. Rotacionar a credencial vazada
+Em **Authentication → Users**, redefina a senha do adailton (`adailton@concrem.com.br`).
+A senha antiga em texto puro esteve versionada — trate como comprometida.
+
+### A3. Política de senha (Authentication → Policies/Providers)
+- Ligue **"Prevent use of leaked passwords"** (HaveIBeenPwned).
+- Defina comprimento mínimo (fator único → recomendado ≥ 15; com MFA → ≥ 8).
+- Avalie **MFA para administradores**.
+
+### A4. Deploy da Edge Function `usuarios`
+Ela não é chamada pelo app antigo, então é inofensivo agora.
+- **Dashboard:** cole o conteúdo de `supabase/functions/usuarios/index.ts` (é autossuficiente)
+  e clique em Deploy.
+- **ou CLI:** `supabase functions deploy usuarios`
+- Defina a allowlist de CORS (secret):
+  ```bash
+  supabase secrets set ALLOWED_ORIGINS="https://SEU-DOMINIO-DO-APP,http://localhost:5173"
+  ```
+
+### A5. Aplicar a Fase 2 (aditiva e segura) — SQL Editor
+Cole e rode **todo** o conteúdo de
+`supabase/migrations/20260723000000_auth_roles_owner_audit.sql`.
+
+Verificações (rode separadamente):
+```sql
+-- (1) devem aparecer 3 linhas: auth_user_id, papel, proprietario
+select column_name from information_schema.columns
+where table_name='concremprodutos_usuarios'
+  and column_name in ('auth_user_id','papel','proprietario');
+
+-- (2) as funções existem (retornam NULL/false no editor, pois não há sessão — ok)
+select concremprodutos_is_admin(), concremprodutos_can_edit();
+
+-- (3) a tabela de auditoria existe
+select to_regclass('public.concremprodutos_auditoria');
+```
+
+---
+
+## Etapa B — janela de corte (poucos minutos, coordenada)
+
+### B1. Confirmar a conta do adailton no Auth compartilhado
+```sql
+select id, email from auth.users where lower(email) = 'adailton@concrem.com.br';
+```
+- **1 linha** → siga para B2.
+- **nada** → o e-mail no `auth.users` é outro; ajuste antes de vincular.
+
+### B2. Vincular o adailton (ainda NÃO destrutivo)
+```sql
+insert into public.concremprodutos_usuarios
+  (email, nome, auth_user_id, auth_email, papel, proprietario, ativo)
+select 'adailton@concrem.com.br', 'Adailton', u.id, u.email, 'admin', true, true
+from auth.users u
+where lower(u.email) = 'adailton@concrem.com.br'
+on conflict (auth_user_id) do update
+  set papel='admin', proprietario=true, ativo=true;
+
+-- confira: 1 linha, proprietario=true, auth_user_id preenchido
+select id, email, auth_user_id, papel, proprietario, ativo
+from public.concremprodutos_usuarios where proprietario;
+```
+
+### B3. Publicar o frontend novo
+Publique a partir deste repositório (`Org-orion/classificador-produtos`, branch `main`).
+Garanta no **host** (Vercel/Lovable/etc.) as variáveis do projeto `ctntlgvoefdbjxvfkahp`:
+`VITE_SUPABASE_URL` e `VITE_SUPABASE_PUBLISHABLE_KEY` (o `.env` não vai mais no git).
+
+### B4. Testar o login
+Entre como `adailton@concrem.com.br` (senha nova da A2). Confirme:
+- abre o Dashboard; aparece **Administração** (papel admin);
+- **salvar uma classificação funciona** (escrita autenticada).
+
+### B5. Aplicar a Fase 3 (fecha a escrita anon) — SQL Editor
+Cole e rode `supabase/migrations/20260723000001_rls_catalogo.sql`.
+
+Verificações:
+```sql
+-- leitura pública (portal) continua funcionando:
+set role anon; select count(*) from concremprodutos_produtos; reset role;
+-- escrita anon deve FALHAR (esperado):
+set role anon;
+insert into concremprodutos_categorias (nome) values ('__teste_anon__'); -- deve dar erro de RLS
+reset role;
+```
+No app (logado): salvar classificação ainda funciona; um Editor não consegue editar regras/categorias.
+
+---
+
+## Etapa C — finalização destrutiva (só após B4/B5 OK e com backup)
+```sql
+-- remove o usuário legado de auth própria
+delete from public.concremprodutos_usuarios where lower(email)='adailton@infinitybi.com.br';
+-- remove a coluna de senha própria (fonte de verdade agora é o GoTrue)
+alter table public.concremprodutos_usuarios drop column if exists senha_hash;
+```
+> Alternativa: rodar o arquivo `supabase/migrations/20260723000002_cutover_usuario_auth_compartilhado.sql`
+> inteiro (tem `BEGIN/COMMIT` e uma guarda que aborta se a conta não existir).
+
+---
+
+## Etapa D — pós-corte
+1. **Portal do representante:** confirme que continua lendo o catálogo normalmente.
+2. **Matriz de teste** (Cérebro — Config. §15 / Supabase §11):
+   - usuário sem perfil → login barra ("sem acesso");
+   - Editor salva produto, mas NÃO cria/edita regras/categorias;
+   - Admin gerencia usuários e regras;
+   - usuário desativado perde acesso;
+   - `anon` não escreve em nenhuma tabela; leitura do catálogo segue OK;
+   - proprietário/último admin não podem ser removidos/rebaixados.
+3. Marque as pendências concluídas no `CLAUDE.md`.
+
+## Rollback
+- Fase 2/Fase 3: podem ser revertidas recriando as policies antigas / removendo colunas,
+  mas o caminho seguro é **restaurar do backup/PITR**.
+- Etapa C (drop de coluna / delete): **sem undo** — só backup/PITR.
