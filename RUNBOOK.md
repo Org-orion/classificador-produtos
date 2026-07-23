@@ -63,26 +63,35 @@ select to_regclass('public.concremprodutos_auditoria');
 
 ## Etapa B — janela de corte (poucos minutos, coordenada)
 
-### B1. Confirmar a conta do adailton no Auth compartilhado
+### B1. Confirmar as contas no Auth compartilhado
+Proprietário = **kaiomelo@concrem.com.br**; admin = **adailton@concrem.com.br**.
 ```sql
-select id, email from auth.users where lower(email) = 'adailton@concrem.com.br';
+select id, email from auth.users
+where lower(email) in ('kaiomelo@concrem.com.br','adailton@concrem.com.br');
 ```
-- **1 linha** → siga para B2.
-- **nada** → o e-mail no `auth.users` é outro; ajuste antes de vincular.
+- **2 linhas** → siga para B2.
+- **falta alguma** → o e-mail no `auth.users` é outro; ajuste antes de vincular.
 
-### B2. Vincular o adailton (ainda NÃO destrutivo)
+### B2. Vincular os usuários (ainda NÃO destrutivo)
 ```sql
 insert into public.concremprodutos_usuarios
   (email, nome, auth_user_id, auth_email, papel, proprietario, ativo)
-select 'adailton@concrem.com.br', 'Adailton', u.id, u.email, 'admin', true, true
+select u.email,
+       case when lower(u.email)='kaiomelo@concrem.com.br' then 'Kaio Melo' else 'Adailton' end,
+       u.id, u.email, 'admin',
+       (lower(u.email) = 'kaiomelo@concrem.com.br'),  -- só o kaio é proprietário
+       true
 from auth.users u
-where lower(u.email) = 'adailton@concrem.com.br'
+where lower(u.email) in ('kaiomelo@concrem.com.br','adailton@concrem.com.br')
 on conflict (auth_user_id) do update
-  set papel='admin', proprietario=true, ativo=true;
+  set papel='admin', ativo=true, proprietario=excluded.proprietario,
+      auth_email=excluded.auth_email, email=excluded.email;
 
--- confira: 1 linha, proprietario=true, auth_user_id preenchido
-select id, email, auth_user_id, papel, proprietario, ativo
-from public.concremprodutos_usuarios where proprietario;
+-- confira: 2 linhas; kaiomelo proprietario=true, adailton proprietario=false
+select email, auth_user_id, papel, proprietario, ativo
+from public.concremprodutos_usuarios
+where auth_user_id is not null
+order by proprietario desc;
 ```
 
 ### B3. Publicar o frontend novo
@@ -91,9 +100,10 @@ Garanta no **host** (Vercel/Lovable/etc.) as variáveis do projeto `ctntlgvoefdb
 `VITE_SUPABASE_URL` e `VITE_SUPABASE_PUBLISHABLE_KEY` (o `.env` não vai mais no git).
 
 ### B4. Testar o login
-Entre como `adailton@concrem.com.br` (senha nova da A2). Confirme:
+Entre com a **sua** conta `kaiomelo@concrem.com.br` (você sabe a senha — é a mesma do faturamento). Confirme:
 - abre o Dashboard; aparece **Administração** (papel admin);
 - **salvar uma classificação funciona** (escrita autenticada).
+- (o adailton também consegue entrar com a conta dele, quando quiser.)
 
 ### B5. Aplicar a Fase 3 (fecha a escrita anon) — SQL Editor
 Cole e rode `supabase/migrations/20260723000001_rls_catalogo.sql`.
@@ -118,8 +128,8 @@ delete from public.concremprodutos_usuarios where lower(email)='adailton@infinit
 -- remove a coluna de senha própria (fonte de verdade agora é o GoTrue)
 alter table public.concremprodutos_usuarios drop column if exists senha_hash;
 ```
-> Alternativa: rodar o arquivo `supabase/migrations/20260723000002_cutover_usuario_auth_compartilhado.sql`
-> inteiro (tem `BEGIN/COMMIT` e uma guarda que aborta se a conta não existir).
+> Equivale a rodar o arquivo `supabase/migrations/20260723000002_cutover_usuario_auth_compartilhado.sql`
+> (já vem com `BEGIN/COMMIT`). O vínculo dos usuários é o da Etapa B2 — este script só limpa.
 
 ---
 
