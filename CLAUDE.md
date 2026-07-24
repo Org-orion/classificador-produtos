@@ -20,20 +20,19 @@ Antes de uma mudança relevante (nova tela, refatoração, feature, correção s
 
 **Decisões (Cérebro — Config. e Permissões §16 / Auth):** provedor = Supabase Auth compartilhado; sessão isolada por aba; **um** grupo/papel por usuário (admin|editor, sem overrides/negação explícita — projeto pequeno); escopo de dados único (global); **um** proprietário; sem cache de permissão (recalcula por request/RLS); auditoria em banco.
 
-### Estado da migração de segurança (2026-07-23)
-Artefatos **criados localmente**, aplicação em produção **pendente de autorização** e teste em homologação:
-- `supabase/migrations/20260723000000_auth_roles_owner_audit.sql` — perfil/papéis/proprietário/auditoria/helpers.
-- `supabase/migrations/20260723000001_rls_catalogo.sql` — RLS portal-safe.
-- `supabase/migrations/20260723000002_cutover_usuario_auth_compartilhado.sql` — **destrutivo**: exclui `adailton@infinity`, vincula `adailton@concrem`, dropa `senha_hash`. Aplicar por último, com backup.
-- Ordem de aplicação (SQL Editor): fundação → RLS → deploy Edge `usuarios` → frontend → cutover.
+### Estado da migração de segurança — APLICADA em produção (2026-07-24)
+Aplicada e verificada no projeto compartilhado `ctntlgvoefdbjxvfkahp` (passo a passo em `RUNBOOK.md`):
+- Fase 2 (`...auth_roles_owner_audit.sql`) e Fase 3 (`...rls_catalogo.sql`) aplicadas via SQL Editor; cutover (`...cutover_usuario...`) executado.
+- Vínculo: **kaiomelo@concrem.com.br** = proprietário/admin; **adailton@concrem.com.br** = admin. Usuário legado `adailton@infinitybi.com.br` **excluído**; coluna `senha_hash` **removida**.
+- Frontend (Supabase Auth) publicado na **Vercel** (`productclassifier.vercel.app`, conectado ao repo `Org-orion/classificador-produtos`); Edge Function `usuarios` deployada.
+- Verificado: login + gate de admin OK; escrita autenticada OK; escrita `anon` **bloqueada**; leitura pública (portal) **preservada**; aba Administração → Usuários OK.
 
 ## ⚠️ Ajustes pendentes (prioridade)
 
-- **Aplicar em produção (com autorização + backup):** os 3 scripts acima pelo SQL Editor + `supabase functions deploy usuarios` + `ALLOWED_ORIGINS`. Testar em homologação antes.
-- **Rotacionar credencial vazada:** a senha (texto puro) do usuário legado `adailton@infinitybi.com.br` esteve versionada em migration/script — tratar como **comprometida** e rotacionar no Supabase Auth (o valor literal já foi removido dos arquivos).
-- **Política de senha (Supabase Auth):** ligar **leaked-password protection** (HaveIBeenPwned) e comprimento mínimo no painel Auth; definir se senha é fator único (≥15) ou com **MFA** (≥8). Avaliar **MFA para admin**.
-- **CORS:** definir `ALLOWED_ORIGINS` no deploy.
-- **Testes de RLS/permissões:** rodar a matriz (Cérebro — Config. §15 / Supabase §11) contra homologação.
+- **Política de senha (Supabase Auth):** ligar **leaked-password protection** (HaveIBeenPwned) + comprimento mínimo no painel Auth; avaliar **MFA para admin** (§9.6 Cérebro — Auth).
+- **Confirmar `ALLOWED_ORIGINS`** da Edge Function apontando para o domínio da Vercel (hardening de CORS).
+- **Etapa D:** conferência final do portal do representante e matriz de papéis (validar restrições de um usuário `editor`).
+- **Repo antigo** `infinitypowerbi/product-classifier-hub` ainda tem a senha legada no histórico (o repo de produção agora é `Org-orion/classificador-produtos`, commit inicial limpo).
 
 ## 📓 Sincronização com o Obsidian (OBRIGATÓRIO)
 
