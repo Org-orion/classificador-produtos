@@ -10,3 +10,9 @@ project_id = "ctntlgvoefdbjxvfkahp"
 # dentro da função. verify_jwt = true faz o gateway rejeitar chamadas sem JWT.
 [functions.usuarios]
 verify_jwt = true
+
+# Sincronização do catálogo (ingestão + classificação). Administrativa: exige
+# JWT do Supabase Auth e revalida admin dentro da função. Deploy via CLI
+# (bundla os arquivos irmãos motor.ts/normalizacao.ts).
+[functions.sincronizar-produtos]
+verify_jwt = true
