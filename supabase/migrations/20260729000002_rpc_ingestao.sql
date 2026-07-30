@@ -126,14 +126,17 @@ BEGIN
   -- 6) Variantes de descrição (todas, com contagem) — histórico preservado.
   INSERT INTO concremprodutos_variantes_descricao AS vv
     (produto_descoberto_id, descricao, descricao_normalizada, quantidade_ocorrencias, primeira_ocorrencia, ultima_ocorrencia)
-  SELECT d.id, t.descricao, concremprodutos_norm_leve(t.descricao), count(*), min(t.updated_at), max(t.updated_at)
+  SELECT d.id,
+         (array_agg(t.descricao ORDER BY t.updated_at DESC))[1],  -- descrição crua representativa
+         concremprodutos_norm_leve(t.descricao),
+         count(*), min(t.updated_at), max(t.updated_at)
   FROM tmp_itens t
   JOIN concremprodutos_produtos_descobertos d ON d.codigo = t.codigo
   WHERE t.codigo IS NOT NULL
-  GROUP BY d.id, t.descricao
+  GROUP BY d.id, concremprodutos_norm_leve(t.descricao)   -- agrupa pela normalizada (evita colisão na mesma linha)
   ON CONFLICT (produto_descoberto_id, descricao_normalizada) DO UPDATE SET
-    quantidade_ocorrencias = concremprodutos_variantes_descricao.quantidade_ocorrencias + EXCLUDED.quantidade_ocorrencias,
-    ultima_ocorrencia = GREATEST(concremprodutos_variantes_descricao.ultima_ocorrencia, EXCLUDED.ultima_ocorrencia),
+    quantidade_ocorrencias = vv.quantidade_ocorrencias + EXCLUDED.quantidade_ocorrencias,
+    ultima_ocorrencia = GREATEST(vv.ultima_ocorrencia, EXCLUDED.ultima_ocorrencia),
     updated_at = now();
 
   -- 7) Enfileira os pendentes para classificação (Etapa 4/5 executará o motor).
