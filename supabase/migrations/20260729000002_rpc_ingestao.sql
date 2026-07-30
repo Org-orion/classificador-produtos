@@ -20,7 +20,10 @@ RETURNS TEXT LANGUAGE sql IMMUTABLE AS $$
   SELECT btrim(regexp_replace(upper(coalesce(txt, '')), '\s+', ' ', 'g'));
 $$;
 
-CREATE OR REPLACE FUNCTION concremprodutos_ingerir_pedidos(p_incremental BOOLEAN DEFAULT true)
+CREATE OR REPLACE FUNCTION concremprodutos_ingerir_pedidos(
+  p_incremental BOOLEAN DEFAULT true,
+  p_limite_pedidos INTEGER DEFAULT NULL   -- NULL/<=0 = sem limite; use um valor pequeno na 1ª carga
+)
 RETURNS concremprodutos_execucoes
 LANGUAGE plpgsql
 SECURITY DEFINER
@@ -57,6 +60,8 @@ BEGIN
       ON e.status = s.status_atual AND e.elegivel = true
     WHERE (v_desde IS NULL OR v.updated_at > v_desde)
       AND jsonb_typeof(v.dados_tabela -> 'itens') = 'array'
+    ORDER BY v.updated_at
+    LIMIT (CASE WHEN COALESCE(p_limite_pedidos, 0) <= 0 THEN NULL ELSE p_limite_pedidos END)
   )
   SELECT
     e.pedido_uuid,
@@ -166,6 +171,6 @@ EXCEPTION WHEN OTHERS THEN
   RAISE;
 END $$;
 
-REVOKE ALL ON FUNCTION concremprodutos_ingerir_pedidos(BOOLEAN) FROM PUBLIC, anon, authenticated;
+REVOKE ALL ON FUNCTION concremprodutos_ingerir_pedidos(BOOLEAN, INTEGER) FROM PUBLIC, anon, authenticated;
 -- EXECUTE concedido só ao service_role (backend). O frontend nunca chama direto.
-GRANT EXECUTE ON FUNCTION concremprodutos_ingerir_pedidos(BOOLEAN) TO service_role;
+GRANT EXECUTE ON FUNCTION concremprodutos_ingerir_pedidos(BOOLEAN, INTEGER) TO service_role;

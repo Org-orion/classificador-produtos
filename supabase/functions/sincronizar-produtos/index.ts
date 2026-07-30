@@ -51,8 +51,10 @@ Deno.serve(async (req) => {
 
   try {
     // 2) Ingestão (set-based, com advisory lock dentro da RPC).
+    const limite = Number.isInteger(body?.limite) && body.limite > 0 ? body.limite : null;
     const { data: exec, error: ingErr } = await db.rpc('concremprodutos_ingerir_pedidos', {
       p_incremental: body?.incremental !== false,
+      p_limite_pedidos: limite,
     });
     if (ingErr) throw ingErr;
 
