@@ -20,6 +20,19 @@ RETURNS TEXT LANGUAGE sql IMMUTABLE AS $$
   SELECT btrim(regexp_replace(upper(coalesce(txt, '')), '\s+', ' ', 'g'));
 $$;
 
+-- dados_tabela pode vir como OBJETO jsonb OU como STRING jsonb (JSON dentro de
+-- string / duplo-codificado). Esta função devolve sempre o objeto real; item
+-- malformado retorna NULL (será ignorado, sem quebrar a execução).
+CREATE OR REPLACE FUNCTION concremprodutos_dados_obj(d JSONB)
+RETURNS JSONB LANGUAGE plpgsql IMMUTABLE AS $$
+BEGIN
+  IF d IS NULL THEN RETURN NULL; END IF;
+  IF jsonb_typeof(d) = 'string' THEN RETURN (d #>> '{}')::jsonb; END IF;
+  RETURN d;
+EXCEPTION WHEN OTHERS THEN
+  RETURN NULL;
+END $$;
+
 CREATE OR REPLACE FUNCTION concremprodutos_ingerir_pedidos(
   p_incremental BOOLEAN DEFAULT true,
   p_limite_pedidos INTEGER DEFAULT NULL   -- NULL/<=0 = sem limite; use um valor pequeno na 1ª carga
@@ -59,7 +72,7 @@ BEGIN
     JOIN concremprodutos_status_elegiveis e
       ON e.status = s.status_atual AND e.elegivel = true
     WHERE (v_desde IS NULL OR v.updated_at > v_desde)
-      AND jsonb_typeof(v.dados_tabela -> 'itens') = 'array'
+      AND jsonb_typeof(concremprodutos_dados_obj(v.dados_tabela) -> 'itens') = 'array'
     ORDER BY v.updated_at
     LIMIT (CASE WHEN COALESCE(p_limite_pedidos, 0) <= 0 THEN NULL ELSE p_limite_pedidos END)
   )
@@ -71,7 +84,7 @@ BEGIN
     coalesce(it ->> 'produto', '')        AS descricao,
     nullif(btrim(it ->> 'un'), '')        AS unidade
   FROM elegiveis e,
-       LATERAL jsonb_array_elements(e.dados_tabela -> 'itens') AS it
+       LATERAL jsonb_array_elements(concremprodutos_dados_obj(e.dados_tabela) -> 'itens') AS it
   WHERE nullif(btrim(it ->> 'id'), '') IS NOT NULL
      OR nullif(it ->> 'produto', '') IS NOT NULL;   -- ignora item sem código E sem descrição
 
