@@ -148,3 +148,41 @@ alter table public.concremprodutos_usuarios drop column if exists senha_hash;
 - Fase 2/Fase 3: podem ser revertidas recriando as policies antigas / removendo colunas,
   mas o caminho seguro é **restaurar do backup/PITR**.
 - Etapa C (drop de coluna / delete): **sem undo** — só backup/PITR.
+
+---
+
+## Migrations avulsas — aplicar pelo SQL Editor
+
+Banco compartilhado com o `faturamento-concrem-main`: **nunca** `supabase db push`
+(o histórico de migrations diverge). Rode o conteúdo do arquivo no SQL Editor, na
+ordem, e confira a verificação no fim de cada um.
+
+### M1. Regra de atributo "não contém" — `20260804000000_regra_nao_contem.sql`
+Amplia o CHECK de `tipo_match` para aceitar `nao_contem`.
+
+- **Enquanto não aplicada:** a opção "Não contém" aparece no formulário, mas o
+  salvamento falha com erro de constraint (`violates check constraint`). Nenhum
+  outro comportamento muda.
+- **Verificação:** cadastre em Administração → Regras Atributo uma regra
+  `Alizar — L (cm)` / `Não contém` / critério `AL` / valor `0`, rode **Aplicar
+  Regras** e confira que os KIT PORTA sem "AL" na descrição saíram de
+  Classificação → *Incompletos*.
+
+### M2. Inativação de produtos — `20260804000001_produto_ativo.sql`
+Adiciona `concremprodutos_produtos.ativo` (default `true`), o índice parcial e
+**recria a view de publicação** excluindo inativos.
+
+- **Enquanto não aplicada:** o filtro "Uso" e o painel de detalhes aparecem, mas o
+  botão "Produto em uso" mostra erro do banco ao ser desligado (coluna inexistente).
+  O resto da tela funciona — o frontend trata `ativo` ausente como ativo.
+- **Verificação:**
+  ```sql
+  SELECT ativo, count(*) FROM concremprodutos_produtos GROUP BY ativo;
+  -- todos true logo após aplicar
+  SELECT count(*) FROM concremprodutos_catalogo_representantes;
+  ```
+  Depois, inative um produto pela tela e confirme que ele desaparece da contagem
+  da view (portal do representante deixa de recebê-lo).
+- **Rollback:** `DROP INDEX idx_concremprodutos_produtos_ativo;` e
+  `ALTER TABLE concremprodutos_produtos DROP COLUMN ativo;` — a view precisa ser
+  recriada sem `AND ativo` **antes** do drop da coluna.
