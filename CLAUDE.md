@@ -45,3 +45,14 @@ Regras:
 - Escreva em português, descrevendo **funcionalidades das telas**. Não cole código na nota.
 - Se mudar stack, status ou escopo, atualize o frontmatter e o resumo da nota-mãe.
 - Ao final da tarefa, confirme no resumo se a documentação foi atualizada (ou que não havia mudança relevante a documentar).
+
+---
+
+## 📓 Sincronização com o Obsidian (OBRIGATÓRIO)
+
+Este projeto é documentado no **cofre Nexus Labs** (Obsidian) em `C:\obsidian\kmz` — fora do OneDrive, versionado em Git privado. **Sempre que fizer uma alteração relevante** (nova tela/rota, funcionalidade, regra de negócio, mudança de stack/escopo/status, ou remoção de recurso), **atualize a documentação**:
+
+- **Nota-mãe** (`tipo: projeto`): `C:\obsidian\kmz\Aplicações\Classificador de Produtos.md` — propósito, stack, banco/dados, segurança, como rodar, riscos e o índice `### 3.1 Páginas`.
+- **Uma nota por tela** (`tipo: pagina`) na pasta `C:\obsidian\kmz\Aplicações\Telas - Classificador de Produtos\`, seguindo o padrão de nome já usado na pasta. Corpo no **método módulo/página**: `# Tela: <Nome>`, seta de volta `← [[Classificador de Produtos]]`, e as seções `## Arquivos` (arquivo-fonte real), `## O que a tela faz`, `## Fluxo` e `## Observações`.
+
+Regras: escreva em **português**; **não** cole código na nota; **segredos só por NOME** de variável de ambiente (nunca o valor); não invente dados (marque `A definir`/`NÃO VERIFICADO`); ao criar tela nova, crie a nota dela e adicione o link no `### 3.1 Páginas` da nota-mãe. Consulte o cérebro de engenharia em `C:\obsidian\kmz\Aplicações\Cérebro\Cérebro — Índice.md`.
