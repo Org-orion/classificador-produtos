@@ -14,6 +14,8 @@ import { useToast } from '@/hooks/use-toast';
 import { Plus, Pencil, Loader2, Trash2, ChevronUp, ChevronDown, ChevronsUpDown } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { normalizePtNumberText } from '@/lib/numbers';
+import { casaBusca } from '@/lib/busca';
+import { BuscaInput } from '@/components/BuscaInput';
 
 const CAMPOS_LABEL: Record<string, string> = {
   tipo_produto: 'Tipo Produto',
@@ -29,14 +31,73 @@ const CAMPOS_LABEL: Record<string, string> = {
   altura_cm: 'Altura (cm)',
   largura_cm: 'Largura (cm)',
   espessura_cm: 'Espessura (cm)',
+  batente_cm: 'Batente (cm)',
+  alizar_l: 'Alizar — L (cm)',
+  alizar_a: 'Alizar — A (cm)',
 };
+
+// Campos numéricos: o valor é digitado, não escolhido numa lista de opções
+const CAMPOS_NUMERICOS = new Set(['altura_cm', 'largura_cm', 'espessura_cm', 'batente_cm', 'alizar_l', 'alizar_a']);
+
+// Campos com lista de opções cadastrável. Batente e alizar ficam de fora: são
+// alvo de regra, mas a tela de Classificação não lê opções deles — cadastrar
+// valores ali geraria dado morto.
+const CAMPOS_COM_OPCOES = Object.keys(CAMPOS_LABEL).filter(
+  c => !['batente_cm', 'alizar_l', 'alizar_a'].includes(c),
+);
 
 const TIPO_MATCH_LABEL: Record<string, string> = {
   contem: 'Contém',
   comeca_com: 'Começa com',
   exato: 'Exato',
   termina_com: 'Termina com',
+  nao_contem: 'Não contém',
 };
+
+const STATUS_OPTS = [
+  { value: 'ativos',   label: 'Ativos' },
+  { value: 'inativos', label: 'Inativos' },
+];
+
+// ---------- peças de filtro compartilhadas pelas abas ----------
+
+function PainelFiltros({ children, resumo }: { children: React.ReactNode; resumo?: React.ReactNode }) {
+  return (
+    <div className="rounded-lg border bg-card px-3 py-2">
+      <div className="flex flex-wrap items-center gap-2">
+        {children}
+        {resumo && <div className="ml-auto flex items-center gap-3 text-xs text-muted-foreground">{resumo}</div>}
+      </div>
+    </div>
+  );
+}
+
+function FiltroSelect({ label, value, onChange, options, padrao, className }: {
+  label: string;
+  value: string;
+  onChange: (v: string) => void;
+  options: (string | { value: string; label: string })[];
+  padrao?: string;
+  className?: string;
+}) {
+  const emUso = value !== (padrao ?? '');
+  return (
+    <Select value={value} onValueChange={v => onChange(v === '__all__' ? '' : v)}>
+      <SelectTrigger className={cn('h-8 w-[150px] text-xs', emUso && 'border-primary text-primary', className)}>
+        <SelectValue placeholder={label} />
+      </SelectTrigger>
+      <SelectContent>
+        <SelectItem value="__all__">Todos</SelectItem>
+        {options.map(opt => {
+          const v = typeof opt === 'string' ? opt : opt.value;
+          const l = typeof opt === 'string' ? opt : opt.label;
+          return <SelectItem key={v} value={v}>{l}</SelectItem>;
+        })}
+      </SelectContent>
+    </Select>
+  );
+}
+
 
 export default function Admin() {
   const [categorias, setCategorias] = useState<Categoria[]>([]);
@@ -81,7 +142,7 @@ export default function Admin() {
   }
 
   return (
-    <div className="p-6 max-w-6xl mx-auto space-y-4">
+    <div className="mx-auto max-w-[1500px] space-y-4 p-6">
       <h1 className="text-2xl font-bold">Administração</h1>
       <Tabs value={activeTab} onValueChange={setActiveTab}>
         <TabsList className="flex-wrap">
@@ -124,16 +185,31 @@ function OpcoesTab({ opcoes, onRefresh, toast }: { opcoes: OpcaoClassificacao[];
   const [valor, setValor] = useState('');
   const [saving, setSaving] = useState(false);
 
-  const campos = Object.keys(CAMPOS_LABEL);
+  const [busca, setBusca] = useState('');
+  const [fCampo, setFCampo] = useState('');
+  const [fStatus, setFStatus] = useState('');
+
+  const campos = CAMPOS_COM_OPCOES;
+
+  // Cada campo vira um cartão; a busca filtra os valores dentro deles
+  const visiveis = opcoes.filter(o =>
+    (!fCampo || o.campo === fCampo) &&
+    (!fStatus || (fStatus === 'ativos' ? o.ativo : !o.ativo)) &&
+    casaBusca(busca, o.valor)
+  );
   const grouped = campos.reduce((acc, c) => {
-    acc[c] = opcoes.filter(o => o.campo === c);
+    acc[c] = visiveis.filter(o => o.campo === c);
     return acc;
   }, {} as Record<string, OpcaoClassificacao[]>);
+  const camposComResultado = campos.filter(c => grouped[c].length > 0);
+  const filtrando = !!(busca || fCampo || fStatus);
+  // Sem filtro, mostra todos os campos (inclusive vazios, para dar onde clicar em "+")
+  const camposNaTela = filtrando ? camposComResultado : campos;
 
-  const openNew = () => { setEditItem(null); setCampo('movimento'); setValor(''); setOpen(true); };
+  const openNew = (campoInicial?: string) => { setEditItem(null); setCampo(campoInicial || 'movimento'); setValor(''); setOpen(true); };
   const openEdit = (o: OpcaoClassificacao) => { setEditItem(o); setCampo(o.campo); setValor(o.valor); setOpen(true); };
 
-  const isNumericCampo = (c: string) => c === 'altura_cm' || c === 'largura_cm' || c === 'espessura_cm';
+  const isNumericCampo = (c: string) => CAMPOS_NUMERICOS.has(c);
 
   const save = async () => {
     setSaving(true);
@@ -172,31 +248,73 @@ function OpcoesTab({ opcoes, onRefresh, toast }: { opcoes: OpcaoClassificacao[];
   };
 
   return (
-    <div className="space-y-6 mt-4">
-      <div className="flex items-center justify-between">
+    <div className="mt-4 space-y-3">
+      <div className="flex items-start justify-between gap-3">
         <p className="text-sm text-muted-foreground">Gerencie os valores possíveis para cada campo de classificação (Movimento, Enchimento, etc.)</p>
-        <Button size="sm" onClick={openNew}><Plus className="h-4 w-4 mr-1" /> Nova Opção</Button>
+        <Button size="sm" onClick={() => openNew()}><Plus className="mr-1 h-4 w-4" /> Nova Opção</Button>
       </div>
 
-      {campos.map(c => (
-        <div key={c} className="space-y-2">
-          <h3 className="font-semibold text-sm uppercase tracking-wide text-muted-foreground">{CAMPOS_LABEL[c]}</h3>
-          <div className="flex flex-wrap gap-2">
-            {grouped[c]?.length ? grouped[c].map(o => (
-              <div key={o.id} className="flex items-center gap-1.5 border rounded-md px-3 py-1.5 bg-card text-sm">
-                <span className={o.ativo ? '' : 'line-through text-muted-foreground'}>{o.valor}</span>
-                <Switch checked={o.ativo} onCheckedChange={() => toggleAtivo(o)} className="scale-75" />
-                <Button variant="ghost" size="icon" className="h-5 w-5" onClick={() => openEdit(o)}>
-                  <Pencil className="h-3 w-3" />
-                </Button>
-                <Button variant="ghost" size="icon" className="h-5 w-5" onClick={() => remove(o)}>
-                  <Trash2 className="h-3 w-3 text-destructive" />
+      <PainelFiltros
+        resumo={
+          <>
+            <span>
+              <strong className="font-semibold text-foreground">{visiveis.length}</strong> de {opcoes.length} opções
+              {filtrando && ` · ${camposComResultado.length} campo(s)`}
+            </span>
+            {filtrando && (
+              <Button variant="ghost" size="sm" className="h-7 px-2 text-xs"
+                onClick={() => { setBusca(''); setFCampo(''); setFStatus(''); }}>
+                Limpar filtros
+              </Button>
+            )}
+          </>
+        }
+      >
+        <BuscaInput value={busca} onChange={setBusca} placeholder="Buscar valor..." className="w-[220px]" />
+        <FiltroSelect label="Campo"  value={fCampo}  onChange={setFCampo}
+          options={campos.map(c => ({ value: c, label: CAMPOS_LABEL[c] }))} />
+        <FiltroSelect label="Status" value={fStatus} onChange={setFStatus} options={STATUS_OPTS} className="w-[120px]" />
+      </PainelFiltros>
+
+      {/* Um cartão por campo. Multi-coluna em vez de grid: os cartões têm alturas
+          bem diferentes (Cor tem 18 valores, Liso/Frisado tem 2) e o grid deixaria
+          buracos alinhando a altura da linha ao cartão mais alto. */}
+      <div className="columns-1 gap-3 lg:columns-2 2xl:columns-3">
+        {camposNaTela.map(c => (
+          <div key={c} className="mb-3 break-inside-avoid rounded-lg border bg-card">
+            <div className="flex items-center justify-between gap-2 border-b bg-muted/40 px-3 py-1.5">
+              <h3 className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
+                {CAMPOS_LABEL[c]}
+              </h3>
+              <div className="flex items-center gap-1">
+                <Badge variant="secondary" className="h-5 px-1.5 text-[10px] tabular-nums">{grouped[c].length}</Badge>
+                <Button variant="ghost" size="icon" className="h-6 w-6" title={`Nova opção em ${CAMPOS_LABEL[c]}`}
+                  onClick={() => openNew(c)}>
+                  <Plus className="h-3.5 w-3.5" />
                 </Button>
               </div>
-            )) : <span className="text-xs text-muted-foreground italic">Nenhuma opção</span>}
+            </div>
+            <div className="flex flex-wrap gap-1.5 p-2">
+              {grouped[c].length ? grouped[c].map(o => (
+                <div key={o.id} className="flex items-center gap-1 rounded-md border bg-background py-1 pl-2 pr-1 text-xs">
+                  <span className={o.ativo ? '' : 'text-muted-foreground line-through'}>{o.valor}</span>
+                  <Switch checked={o.ativo} onCheckedChange={() => toggleAtivo(o)} className="scale-[0.6]" />
+                  <Button variant="ghost" size="icon" className="h-5 w-5" onClick={() => openEdit(o)}>
+                    <Pencil className="h-3 w-3" />
+                  </Button>
+                  <Button variant="ghost" size="icon" className="h-5 w-5" onClick={() => remove(o)}>
+                    <Trash2 className="h-3 w-3 text-destructive" />
+                  </Button>
+                </div>
+              )) : <span className="px-1 py-0.5 text-xs italic text-muted-foreground">Nenhuma opção</span>}
+            </div>
           </div>
-        </div>
-      ))}
+        ))}
+      </div>
+
+      {filtrando && camposComResultado.length === 0 && (
+        <p className="py-10 text-center text-sm text-muted-foreground">Nenhuma opção encontrada</p>
+      )}
 
       <Dialog open={open} onOpenChange={setOpen}>
         <DialogContent>
@@ -243,6 +361,10 @@ function RegrasAtributoTab({ regrasAtributo, opcoes, onRefresh, toast }: { regra
   const [saving, setSaving] = useState(false);
   const [sortField, setSortField] = useState<string | null>(null);
   const [sortDir, setSortDir] = useState<'asc' | 'desc'>('asc');
+  const [busca, setBusca] = useState('');
+  const [fCampo, setFCampo] = useState('');
+  const [fTipo, setFTipo] = useState('');
+  const [fStatus, setFStatus] = useState('');
 
   const handleSort = (field: string) => {
     if (sortField === field) setSortDir(d => d === 'asc' ? 'desc' : 'asc');
@@ -252,12 +374,47 @@ function RegrasAtributoTab({ regrasAtributo, opcoes, onRefresh, toast }: { regra
   const campos = Object.keys(CAMPOS_LABEL);
   const valoresParaCampo = opcoes.filter(o => o.campo === campo && o.ativo);
 
+  const filtrando = !!(busca || fCampo || fTipo || fStatus);
+  const limparFiltros = () => { setBusca(''); setFCampo(''); setFTipo(''); setFStatus(''); };
+
+  // Campos que realmente têm regra, com a contagem — o filtro só oferece o que existe
+  const contagemPorCampo = regrasAtributo.reduce((acc, r) => {
+    acc[r.campo] = (acc[r.campo] || 0) + 1;
+    return acc;
+  }, {} as Record<string, number>);
+  const camposComRegra = campos.filter(c => contagemPorCampo[c]);
+
+  const visiveis = regrasAtributo
+    .filter(r =>
+      (!fCampo || r.campo === fCampo) &&
+      (!fTipo || r.tipo_match === fTipo) &&
+      (!fStatus || (fStatus === 'ativos' ? r.ativo : !r.ativo)) &&
+      casaBusca(busca, r.criterio, r.valor)
+    )
+    .sort((a, b) => {
+      if (!sortField) return 0;
+      const av = (a as unknown as Record<string, unknown>)[sortField] ?? '';
+      const bv = (b as unknown as Record<string, unknown>)[sortField] ?? '';
+      const cmp = String(av).localeCompare(String(bv), 'pt-BR', { numeric: true });
+      return sortDir === 'asc' ? cmp : -cmp;
+    });
+
   const openNew = () => { setEditItem(null); setCampo('movimento'); setValor(''); setTipoMatch('contem'); setCriterio(''); setPrioridade('0'); setOpen(true); };
   const openEdit = (r: RegraAtributo) => { setEditItem(r); setCampo(r.campo); setValor(r.valor); setTipoMatch(r.tipo_match); setCriterio(r.criterio); setPrioridade(String(r.prioridade)); setOpen(true); };
 
+  // Campo numérico virou texto livre (para aceitar 0 = "não tem"), então precisa
+  // de guarda: valor não numérico salva, mas o motor descarta a regra em silêncio.
+  const valorNumericoInvalido =
+    CAMPOS_NUMERICOS.has(campo) && normalizePtNumberText(valor.trim()) === null;
+
   const save = async () => {
+    if (valorNumericoInvalido) {
+      toast({ title: 'Valor inválido', description: 'Informe um número (ex: 15, 3,5 ou 0).', variant: 'destructive' });
+      return;
+    }
     setSaving(true);
-    const payload = { campo, valor, tipo_match: tipoMatch, criterio: criterio.trim(), prioridade: parseInt(prioridade) || 0 };
+    const valorFinal = CAMPOS_NUMERICOS.has(campo) ? normalizePtNumberText(valor.trim())! : valor;
+    const payload = { campo, valor: valorFinal, tipo_match: tipoMatch, criterio: criterio.trim(), prioridade: parseInt(prioridade) || 0 };
     if (editItem) {
       const { error } = await supabase.from('concremprodutos_regras_atributo').update(payload).eq('id', editItem.id);
       setSaving(false);
@@ -295,14 +452,47 @@ function RegrasAtributoTab({ regrasAtributo, opcoes, onRefresh, toast }: { regra
         <Button size="sm" onClick={openNew}><Plus className="h-4 w-4 mr-1" /> Nova Regra</Button>
       </div>
 
-      <div className="border rounded-lg overflow-auto bg-card">
+      <PainelFiltros
+        resumo={
+          <>
+            <span>
+              <strong className="font-semibold text-foreground">{visiveis.length}</strong> de {regrasAtributo.length} regras
+            </span>
+            {filtrando && (
+              <Button variant="ghost" size="sm" className="h-7 px-2 text-xs" onClick={limparFiltros}>
+                Limpar filtros
+              </Button>
+            )}
+          </>
+        }
+      >
+        <BuscaInput value={busca} onChange={setBusca} placeholder="Buscar critério ou valor..." className="w-[240px]" />
+        <FiltroSelect
+          label="Campo" value={fCampo} onChange={setFCampo}
+          options={camposComRegra.map(c => ({ value: c, label: `${CAMPOS_LABEL[c]} (${contagemPorCampo[c]})` }))}
+          className="w-[190px]"
+        />
+        <FiltroSelect
+          label="Tipo de comparação" value={fTipo} onChange={setFTipo}
+          options={Object.entries(TIPO_MATCH_LABEL).map(([value, label]) => ({ value, label }))}
+          className="w-[170px]"
+        />
+        <FiltroSelect label="Status" value={fStatus} onChange={setFStatus} options={STATUS_OPTS} className="w-[120px]" />
+      </PainelFiltros>
+
+      {/* rolagem própria + cabeçalho fixo: a lista passa de 300 regras */}
+      <div className="max-h-[calc(100vh-330px)] overflow-auto rounded-lg border bg-card">
         <table className="w-full text-sm">
-          <thead><tr className="border-b bg-muted/50">
+          <thead><tr>
             {(['campo','tipo_match','criterio','valor'] as const).map(f => {
               const labels: Record<string, string> = { campo: 'Campo', tipo_match: 'Tipo Match', criterio: 'Critério', valor: '→ Valor' };
               const active = sortField === f;
               return (
-                <th key={f} className="px-3 py-2 text-left cursor-pointer select-none hover:bg-muted/70 group whitespace-nowrap" onClick={() => handleSort(f)}>
+                <th
+                  key={f}
+                  className="group sticky top-0 z-10 cursor-pointer select-none whitespace-nowrap bg-muted px-3 py-2 text-left shadow-[inset_0_-1px_0_hsl(var(--border))] hover:bg-secondary"
+                  onClick={() => handleSort(f)}
+                >
                   <span className="flex items-center gap-1">
                     {labels[f]}
                     {active
@@ -312,26 +502,20 @@ function RegrasAtributoTab({ regrasAtributo, opcoes, onRefresh, toast }: { regra
                 </th>
               );
             })}
-            <th className="px-3 py-2 text-left">Prior.</th>
-            <th className="px-3 py-2 text-left">Ativo</th>
-            <th className="px-3 py-2 text-left">Ações</th>
+            {['Prior.', 'Ativo', 'Ações'].map(h => (
+              <th key={h} className="sticky top-0 z-10 whitespace-nowrap bg-muted px-3 py-2 text-left shadow-[inset_0_-1px_0_hsl(var(--border))]">{h}</th>
+            ))}
           </tr></thead>
           <tbody>
-            {[...regrasAtributo].sort((a, b) => {
-              if (!sortField) return 0;
-              const av = (a as any)[sortField] ?? '';
-              const bv = (b as any)[sortField] ?? '';
-              const cmp = String(av).localeCompare(String(bv), 'pt-BR', { numeric: true });
-              return sortDir === 'asc' ? cmp : -cmp;
-            }).map(r => (
-              <tr key={r.id} className="border-b">
+            {visiveis.map(r => (
+              <tr key={r.id} className={cn('border-b transition-colors hover:bg-muted', !r.ativo && 'text-muted-foreground')}>
                 <td className="px-3 py-2"><Badge variant="secondary" className="text-[10px]">{CAMPOS_LABEL[r.campo] || r.campo}</Badge></td>
-                <td className="px-3 py-2 text-xs">{TIPO_MATCH_LABEL[r.tipo_match]}</td>
+                <td className="px-3 py-2 text-xs">{TIPO_MATCH_LABEL[r.tipo_match] || r.tipo_match}</td>
                 <td className="px-3 py-2 font-mono text-xs">"{r.criterio}"</td>
-                <td className="px-3 py-2 font-medium text-xs">{r.valor}</td>
+                <td className="px-3 py-2 text-xs font-medium">{r.valor}</td>
                 <td className="px-3 py-2 tabular-nums">{r.prioridade}</td>
                 <td className="px-3 py-2"><Switch checked={r.ativo} onCheckedChange={() => toggleAtivo(r)} /></td>
-                <td className="px-3 py-2 flex gap-1">
+                <td className="flex gap-1 px-3 py-2">
                   <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => openEdit(r)}>
                     <Pencil className="h-3.5 w-3.5" />
                   </Button>
@@ -341,8 +525,10 @@ function RegrasAtributoTab({ regrasAtributo, opcoes, onRefresh, toast }: { regra
                 </td>
               </tr>
             ))}
-            {regrasAtributo.length === 0 && (
-              <tr><td colSpan={7} className="px-3 py-8 text-center text-muted-foreground">Nenhuma regra de atributo cadastrada</td></tr>
+            {visiveis.length === 0 && (
+              <tr><td colSpan={7} className="px-3 py-8 text-center text-muted-foreground">
+                {regrasAtributo.length === 0 ? 'Nenhuma regra de atributo cadastrada' : 'Nenhuma regra encontrada com esses filtros'}
+              </td></tr>
             )}
           </tbody>
         </table>
@@ -363,12 +549,31 @@ function RegrasAtributoTab({ regrasAtributo, opcoes, onRefresh, toast }: { regra
             </div>
             <div>
               <Label>Valor a atribuir</Label>
-              <Select value={valor} onValueChange={setValor}>
-                <SelectTrigger><SelectValue placeholder="Selecione o valor..." /></SelectTrigger>
-                <SelectContent>
-                  {valoresParaCampo.map(o => <SelectItem key={o.id} value={o.valor}>{o.valor}</SelectItem>)}
-                </SelectContent>
-              </Select>
+              {CAMPOS_NUMERICOS.has(campo) ? (
+                <>
+                  <Input
+                    value={valor}
+                    onChange={e => setValor(e.target.value)}
+                    inputMode="decimal"
+                    placeholder="Ex: 15  •  use 0 para “não tem”"
+                    className={cn(valor.trim() && valorNumericoInvalido && 'border-destructive')}
+                  />
+                  {valor.trim() && valorNumericoInvalido && (
+                    <p className="mt-1 text-xs text-destructive">Precisa ser um número (ex: 15, 3,5 ou 0).</p>
+                  )}
+                  <p className="mt-1 text-xs text-muted-foreground">
+                    Medida com <strong>0</strong> significa que o produto não tem essa característica —
+                    e por ser um valor preenchido, ele deixa de aparecer como incompleto.
+                  </p>
+                </>
+              ) : (
+                <Select value={valor} onValueChange={setValor}>
+                  <SelectTrigger><SelectValue placeholder="Selecione o valor..." /></SelectTrigger>
+                  <SelectContent>
+                    {valoresParaCampo.map(o => <SelectItem key={o.id} value={o.valor}>{o.valor}</SelectItem>)}
+                  </SelectContent>
+                </Select>
+              )}
             </div>
             <div>
               <Label>Tipo de comparação</Label>
@@ -376,18 +581,44 @@ function RegrasAtributoTab({ regrasAtributo, opcoes, onRefresh, toast }: { regra
                 <SelectTrigger><SelectValue /></SelectTrigger>
                 <SelectContent>
                   <SelectItem value="contem">Contém</SelectItem>
+                  <SelectItem value="nao_contem">Não contém</SelectItem>
                   <SelectItem value="comeca_com">Começa com</SelectItem>
                   <SelectItem value="exato">Exato</SelectItem>
                   <SelectItem value="termina_com">Termina com</SelectItem>
                 </SelectContent>
               </Select>
+              {tipoMatch === 'nao_contem' && (
+                <div className="mt-1 space-y-1 rounded-md border border-amber-200 bg-amber-50/60 px-2.5 py-2 text-xs text-muted-foreground">
+                  <p>
+                    Varre <strong>todo o catálogo</strong>: aplica o valor a cada produto cuja
+                    descrição não traz o critério (só onde o campo ainda está vazio, para não
+                    apagar o que foi classificado à mão).
+                  </p>
+                  <p>
+                    O critério é buscado <strong>iniciando uma palavra</strong> — a sigla que você
+                    digitar, e não um trecho no meio de outra palavra. Com <code>AL</code>:
+                    encontra <code>AL5x8,5CM</code> e <code>ALIZAR</code>; ignora <code>METAL</code> e{' '}
+                    <code>GERAL</code>.
+                  </p>
+                  <p className="text-amber-800">
+                    <strong>Cuidado:</strong> por isso o critério precisa ser o começo do termo.
+                    <code>15CM</code> seria considerado ausente em <code>(BAT15CM)</code>, porque ali
+                    ele vem colado depois de <code>BAT</code> — e a regra gravaria o valor em produtos
+                    que têm a característica. Use a sigla que inicia o termo (<code>BAT</code>).
+                  </p>
+                  <p>
+                    Ex.: campo <strong>Alizar — L (cm)</strong>, critério <code>AL</code>,
+                    valor <code>0</code> → marca “sem alizar” todo produto sem AL na descrição.
+                  </p>
+                </div>
+              )}
             </div>
             <div><Label>Critério (texto a buscar na descrição)</Label><Input value={criterio} onChange={e => setCriterio(e.target.value)} placeholder="Ex: CORR, SEMI-OCA, INNOV." /></div>
             <div><Label>Prioridade (maior = aplicado primeiro)</Label><Input type="number" value={prioridade} onChange={e => setPrioridade(e.target.value)} /></div>
           </div>
           <DialogFooter>
             <Button variant="outline" onClick={() => setOpen(false)}>Cancelar</Button>
-            <Button onClick={save} disabled={saving || !criterio.trim() || !valor}>{saving ? <Loader2 className="h-4 w-4 animate-spin" /> : 'Salvar'}</Button>
+            <Button onClick={save} disabled={saving || !criterio.trim() || !valor.trim() || valorNumericoInvalido}>{saving ? <Loader2 className="h-4 w-4 animate-spin" /> : 'Salvar'}</Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
