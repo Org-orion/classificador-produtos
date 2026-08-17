@@ -2705,6 +2705,7 @@ export type Database = {
           alizar_e: number | null
           alizar_l: number | null
           altura_cm: number | null
+          ativo: boolean
           batente_cm: number | null
           batente_tipo: string | null
           categoria_id: string | null
@@ -2736,6 +2737,7 @@ export type Database = {
           alizar_e?: number | null
           alizar_l?: number | null
           altura_cm?: number | null
+          ativo?: boolean
           batente_cm?: number | null
           batente_tipo?: string | null
           categoria_id?: string | null
@@ -2767,6 +2769,7 @@ export type Database = {
           alizar_e?: number | null
           alizar_l?: number | null
           altura_cm?: number | null
+          ativo?: boolean
           batente_cm?: number | null
           batente_tipo?: string | null
           categoria_id?: string | null

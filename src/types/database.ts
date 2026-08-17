@@ -46,6 +46,9 @@ export interface Produto {
   categoria_id: string | null;
   subcategoria_id: string | null;
   situacao: string;
+  /** false = produto fora de linha. Opcional: pode não existir em bases sem a
+   *  migration 20260804000001 aplicada — trate `undefined` como ativo. */
+  ativo?: boolean;
   created_at: string;
   updated_at: string;
 }
