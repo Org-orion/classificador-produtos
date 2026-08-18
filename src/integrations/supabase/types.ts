@@ -2648,6 +2648,27 @@ export type Database = {
         }
         Relationships: []
       }
+      concremprodutos_aplicabilidade: {
+        Row: {
+          campo: string
+          created_at: string
+          id: string
+          tipo_produto: string
+        }
+        Insert: {
+          campo: string
+          created_at?: string
+          id?: string
+          tipo_produto: string
+        }
+        Update: {
+          campo?: string
+          created_at?: string
+          id?: string
+          tipo_produto?: string
+        }
+        Relationships: []
+      }
       concremprodutos_categorias: {
         Row: {
           ativo: boolean | null

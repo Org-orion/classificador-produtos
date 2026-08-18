@@ -15,6 +15,7 @@ import { Plus, Pencil, Loader2, Trash2, ChevronUp, ChevronDown, ChevronsUpDown }
 import { cn } from '@/lib/utils';
 import { normalizePtNumberText, parsePtNumber, formatPtNumber } from '@/lib/numbers';
 import { casaBusca, normalizaBusca } from '@/lib/busca';
+import { CAMPOS_APLICAVEIS } from '@/lib/completude';
 import { BuscaInput } from '@/components/BuscaInput';
 
 const CAMPOS_LABEL: Record<string, string> = {
@@ -106,6 +107,7 @@ export default function Admin() {
   const [usuarios, setUsuarios] = useState<Usuario[]>([]);
   const [opcoes, setOpcoes] = useState<OpcaoClassificacao[]>([]);
   const [regrasAtributo, setRegrasAtributo] = useState<RegraAtributo[]>([]);
+  const [aplicabilidade, setAplicabilidade] = useState<{ tipo_produto: string; campo: string }[]>([]);
   const [loading, setLoading] = useState(true);
   const [activeTab, setActiveTab] = useState('opcoes');
   const { toast } = useToast();
@@ -123,6 +125,8 @@ export default function Admin() {
       ]);
       setOpcoes(oRes.data || []);
       setRegrasAtributo(raRes.data || []);
+      const aplRes = await supabase.from('concremprodutos_aplicabilidade').select('tipo_produto, campo');
+      setAplicabilidade(aplRes.error ? [] : (aplRes.data || []));
       // Usuários vêm da Edge Function administrativa (JWT do Supabase Auth).
       try {
         setUsuarios(await usuariosApi.list());
@@ -148,6 +152,7 @@ export default function Admin() {
         <TabsList className="flex-wrap">
           <TabsTrigger value="opcoes">Opções de Classificação</TabsTrigger>
           <TabsTrigger value="regras_atributo">Regras de Atributo</TabsTrigger>
+          <TabsTrigger value="aplicabilidade">Campos por Tipo</TabsTrigger>
           <TabsTrigger value="categorias">Categorias</TabsTrigger>
           <TabsTrigger value="subcategorias">Subcategorias</TabsTrigger>
           <TabsTrigger value="regras">Regras Categoria</TabsTrigger>
@@ -159,6 +164,14 @@ export default function Admin() {
         </TabsContent>
         <TabsContent value="regras_atributo">
           <RegrasAtributoTab regrasAtributo={regrasAtributo} opcoes={opcoes} onRefresh={() => loadData(true)} toast={toast} />
+        </TabsContent>
+        <TabsContent value="aplicabilidade">
+          <AplicabilidadeTab
+            aplicabilidade={aplicabilidade}
+            opcoes={opcoes}
+            onRefresh={() => loadData(true)}
+            toast={toast}
+          />
         </TabsContent>
         <TabsContent value="categorias">
           <CategoriasTab categorias={categorias} onRefresh={() => loadData(true)} toast={toast} />
@@ -662,6 +675,93 @@ function RegrasAtributoTab({ regrasAtributo, opcoes, onRefresh, toast }: { regra
           </DialogFooter>
         </DialogContent>
       </Dialog>
+    </div>
+  );
+}
+
+
+// ===================== CAMPOS POR TIPO (APLICABILIDADE) =====================
+function AplicabilidadeTab({ aplicabilidade, opcoes, onRefresh, toast }: {
+  aplicabilidade: { tipo_produto: string; campo: string }[];
+  opcoes: OpcaoClassificacao[];
+  onRefresh: () => void;
+  toast: any;
+}) {
+  const [salvando, setSalvando] = useState<string | null>(null);
+
+  // Os tipos vêm das opções cadastradas em "Tipo Produto"
+  const tipos = opcoes
+    .filter(o => o.campo === 'tipo_produto')
+    .map(o => o.valor.toUpperCase().trim())
+    .sort();
+
+  const naoSeAplica = new Set(aplicabilidade.map(a => `${a.tipo_produto.toUpperCase().trim()}|${a.campo}`));
+
+  const alternar = async (tipo: string, campo: string, aplicaAgora: boolean) => {
+    const chave = `${tipo}|${campo}`;
+    setSalvando(chave);
+    const { error } = aplicaAgora
+      // passou a NÃO se aplicar → grava a exceção
+      ? await supabase.from('concremprodutos_aplicabilidade').insert({ tipo_produto: tipo, campo })
+      // voltou a se aplicar → remove a exceção
+      : await supabase.from('concremprodutos_aplicabilidade')
+          .delete().eq('tipo_produto', tipo).eq('campo', campo);
+    setSalvando(null);
+    if (error) {
+      toast({ title: 'Não foi possível salvar', description: error.message, variant: 'destructive' });
+      return;
+    }
+    onRefresh();
+  };
+
+  return (
+    <div className="mt-4 space-y-3">
+      <p className="text-sm text-muted-foreground">
+        Marque os campos que <strong>se aplicam</strong> a cada tipo de produto. Campo desmarcado
+        some da tela de classificação e nunca conta como pendência — é assim que um ALIZAR não é
+        cobrado por movimento. Vale para produto novo e antigo, na hora.
+      </p>
+
+      {tipos.length === 0 && (
+        <p className="py-10 text-center text-sm text-muted-foreground">
+          Cadastre os valores de "Tipo Produto" em Opções de Classificação primeiro.
+        </p>
+      )}
+
+      <div className="columns-1 gap-3 lg:columns-2 2xl:columns-3">
+        {tipos.map(tipo => {
+          const aplicaveis = CAMPOS_APLICAVEIS.filter(c => !naoSeAplica.has(`${tipo}|${c}`)).length;
+          return (
+            <div key={tipo} className="mb-3 break-inside-avoid rounded-lg border bg-card">
+              <div className="flex items-center justify-between gap-2 border-b bg-muted/40 px-3 py-1.5">
+                <h3 className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">{tipo}</h3>
+                <Badge variant="secondary" className="h-5 px-1.5 text-[10px] tabular-nums">
+                  {aplicaveis}/{CAMPOS_APLICAVEIS.length}
+                </Badge>
+              </div>
+              <div className="grid grid-cols-2 gap-x-3 gap-y-1 p-2">
+                {CAMPOS_APLICAVEIS.map(campo => {
+                  const chave = `${tipo}|${campo}`;
+                  const aplica = !naoSeAplica.has(chave);
+                  return (
+                    <label key={campo} className="flex items-center gap-1.5 text-xs">
+                      <Switch
+                        checked={aplica}
+                        disabled={salvando === chave}
+                        onCheckedChange={() => alternar(tipo, campo, aplica)}
+                        className="scale-[0.6]"
+                      />
+                      <span className={aplica ? '' : 'text-muted-foreground line-through'}>
+                        {CAMPOS_LABEL[campo] || (campo === 'alizar' ? 'Alizar (L×A)' : campo)}
+                      </span>
+                    </label>
+                  );
+                })}
+              </div>
+            </div>
+          );
+        })}
+      </div>
     </div>
   );
 }

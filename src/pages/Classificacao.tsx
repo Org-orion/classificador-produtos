@@ -23,9 +23,9 @@ import { casaBusca } from '@/lib/busca';
 import { emLotes, agruparPorAtualizacao } from '@/lib/lotes';
 import { marcarRegra, marcarManual, limparCamposDeRegra } from '@/lib/origem';
 import {
-  ATTR_FIELDS, DIM_FIELDS, type AttrField, isBlank, inativo,
-  attrVisible, dimVisible, alizarColVisible, batenteColVisible,
-  camposFaltando, situacaoCorreta,
+  ATTR_FIELDS, DIM_FIELDS, type AttrField, isBlank, inativo, seAplica,
+  camposFaltando, situacaoCorreta, montarAplicabilidade, APLICABILIDADE_PADRAO,
+  type Aplicabilidade,
 } from '@/lib/completude';
 import { BuscaInput } from '@/components/BuscaInput';
 
@@ -50,9 +50,9 @@ const medidaTexto = (v: number | null | undefined) => (v === 0 ? 'não tem' : fo
 const FALTA_ATTR = new Set<string>(ATTR_FIELDS);
 
 // Avalia o filtro "Classificação" (completude dos atributos, não a situação)
-function matchClassificacao(p: Produto, modo: string): boolean {
+function matchClassificacao(p: Produto, modo: string, aplicabilidade: Aplicabilidade): boolean {
   if (!modo) return true;
-  const faltando = camposFaltando(p);
+  const faltando = camposFaltando(p, aplicabilidade);
   switch (modo) {
     case 'incompleto':    return faltando.length > 0;
     case 'completo':      return faltando.length === 0;
@@ -168,6 +168,9 @@ interface ModifiedFields {
 export default function Classificacao() {
   const [produtos, setProdutos] = useState<Produto[]>([]);
   const [opcoes, setOpcoes] = useState<OpcaoClassificacao[]>([]);
+  // Quais campos não se aplicam a cada tipo. Vem da tabela; enquanto não carrega
+  // (ou em base sem a migration) usa o padrão, que reproduz o comportamento antigo.
+  const [aplicabilidade, setAplicabilidade] = useState<Aplicabilidade>(APLICABILIDADE_PADRAO);
   const [loading, setLoading] = useState(true);
   const [modified, setModified] = useState<Map<string, ModifiedFields>>(new Map());
   const [page, setPage] = useState(0);
@@ -256,12 +259,15 @@ export default function Classificacao() {
   const loadData = useCallback(async () => {
     setLoading(true);
     try {
-      const [p, oRes] = await Promise.all([
+      const [p, oRes, aplRes] = await Promise.all([
         fetchAllProdutos(),
         supabase.from('concremprodutos_opcoes_classificacao').select('*').eq('ativo', true).order('campo').order('valor'),
+        supabase.from('concremprodutos_aplicabilidade').select('tipo_produto, campo'),
       ]);
       setProdutos(p);
       setOpcoes(oRes.data || []);
+      // erro (tabela ainda não criada) cai no padrão, sem quebrar a tela
+      setAplicabilidade(montarAplicabilidade(aplRes.error ? null : aplRes.data));
     } catch {
       toast({ title: 'Erro ao carregar dados', variant: 'destructive' });
     } finally {
@@ -314,14 +320,14 @@ export default function Classificacao() {
       if (!matchTexto(p.veneziana,    fVeneziana)) return false;
       if (!matchTexto(p.visor,        fVisor))     return false;
       if (fStatus  && p.situacao     !== fStatus)  return false;
-      if (!matchClassificacao(p, fClassif))        return false;
+      if (!matchClassificacao(p, fClassif, aplicabilidade)) return false;
       return true;
     });
   }, [produtos, fTipo, fMov, fEnch, fRev, fLinha, fPerfil, fCor, fAltura, fLargura, fBatente, fAlizar, fProtect, fVeneziana, fVisor, fStatus, fClassif, fUso, busca]);
 
   // Produto fora de linha não precisa de classificação: não conta como pendência
   const incompletos = useMemo(
-    () => filtered.filter(p => !inativo(p) && camposFaltando(p).length > 0).length,
+    () => filtered.filter(p => !inativo(p) && camposFaltando(p, aplicabilidade).length > 0).length,
     [filtered],
   );
 
@@ -337,7 +343,7 @@ export default function Classificacao() {
     const aRebaixar: Produto[] = [];
     for (const p of produtos) {
       if (inativo(p)) continue;
-      const correta = situacaoCorreta(p);
+      const correta = situacaoCorreta(p, aplicabilidade);
       if (p.situacao === correta) continue;
       (correta === 'classificado' ? aPromover : aRebaixar).push(p);
     }
@@ -416,7 +422,7 @@ export default function Classificacao() {
 
     // situação vem da completude do produto já com as edições aplicadas
     const updatePayload: any = { ...(m || {}) };
-    updatePayload.situacao = situacaoCorreta({ ...prod, ...(m || {}) } as Produto);
+    updatePayload.situacao = situacaoCorreta({ ...prod, ...(m || {}) } as Produto, aplicabilidade);
     // o que foi mexido à mão deixa de ser de regra — Revisão não toca mais nele
     updatePayload.campos_regra = marcarManual(prod.campos_regra, Object.keys(m || {}));
 
@@ -430,7 +436,7 @@ export default function Classificacao() {
       toast({
         title: 'Produto salvo!',
         description: updatePayload.situacao === 'pendente'
-          ? `Segue pendente: falta ${camposFaltando({ ...prod, ...(m || {}) } as Produto).map(f => COL_LABELS[f] || f).join(', ')}.`
+          ? `Segue pendente: falta ${camposFaltando({ ...prod, ...(m || {}) } as Produto, aplicabilidade).map(f => COL_LABELS[f] || f).join(', ')}.`
           : undefined,
       });
       setModified(prev => { const n = new Map(prev); n.delete(prodId); return n; });
@@ -456,7 +462,7 @@ export default function Classificacao() {
     const rebaixarLista: Produto[] = [];
     for (const p of lista) {
       if (inativo(p)) continue;
-      const correta = situacaoCorreta(p);
+      const correta = situacaoCorreta(p, aplicabilidade);
       if (p.situacao === correta) continue;
       (correta === 'classificado' ? promover : rebaixarLista).push(p);
     }
@@ -529,7 +535,7 @@ export default function Classificacao() {
     for (const [id, m] of entries) {
       const prod = produtos.find(pp => pp.id === id);
       const updatePayload: any = { ...m };
-      updatePayload.situacao = situacaoCorreta({ ...(prod || {}), ...m } as Produto);
+      updatePayload.situacao = situacaoCorreta({ ...(prod || {}), ...m } as Produto, aplicabilidade);
       updatePayload.campos_regra = marcarManual(prod?.campos_regra, Object.keys(m));
       const { error } = await supabase
         .from('concremprodutos_produtos')
@@ -844,7 +850,7 @@ export default function Classificacao() {
     { key: 'visor',      label: 'Visor',         value: fVisor,     set: setFVisor,     options: ['Sim', 'Não'],                 allowEmpty: true },
   ];
   const detalhe = detalheId ? produtos.find(p => p.id === detalheId) : undefined;
-  const faltandoDetalhe = detalhe ? camposFaltando(detalhe) : [];
+  const faltandoDetalhe = detalhe ? camposFaltando(detalhe, aplicabilidade) : [];
   const avancados = filtros.filter(f => !f.primary);
   // "ativo" = diferente do padrão (o filtro Uso começa em 'ativos', não vazio)
   const ativos = filtros.filter(f => f.value !== (f.padrao ?? ''));
@@ -1171,7 +1177,7 @@ export default function Classificacao() {
 
                   {attrCols.map((field, i) => {
                     const cls = cn(TD, i === 0 && GRUPO);
-                    if (!attrVisible(tipo, field)) return <td key={field} className={cls}><NaoAplica /></td>;
+                    if (!seAplica(tipo, field, aplicabilidade)) return <td key={field} className={cls}><NaoAplica /></td>;
                     const currentVal = getField(p, field) || '';
                     const fieldOptions = opcoesPorCampo[field] || [];
                     return (
@@ -1194,9 +1200,9 @@ export default function Classificacao() {
                   {medidaCols.map((c, i) => {
                     const cls = cn(TD, i === 0 && GRUPO);
                     const aplica =
-                      c.key === 'alizar'     ? alizarColVisible(tipo)  :
-                      c.key === 'batente_cm' ? batenteColVisible(tipo) :
-                      dimVisible(tipo, c.key);
+                      c.key === 'alizar'     ? seAplica(tipo, 'alizar', aplicabilidade)  :
+                      c.key === 'batente_cm' ? seAplica(tipo, 'batente_cm', aplicabilidade) :
+                      seAplica(tipo, c.key, aplicabilidade);
                     if (!aplica) return <td key={c.key} className={cls}><NaoAplica /></td>;
                     if (c.key === 'alizar') {
                       return (
@@ -1338,21 +1344,21 @@ export default function Classificacao() {
                     <DetalheLinha
                       key={f}
                       rotulo={ATTR_LABELS[f]}
-                      valor={attrVisible(detalhe.tipo_produto, f) ? getField(detalhe, f) : undefined}
+                      valor={seAplica(detalhe.tipo_produto, f, aplicabilidade) ? getField(detalhe, f) : undefined}
                     />
                   ))}
                 </Secao>
 
                 <Secao titulo="Medidas (cm)">
-                  <DetalheLinha rotulo="Altura"    valor={dimVisible(detalhe.tipo_produto, 'altura_cm')    ? formatPtNumber(getField(detalhe, 'altura_cm'))    : undefined} />
-                  <DetalheLinha rotulo="Largura"   valor={dimVisible(detalhe.tipo_produto, 'largura_cm')   ? formatPtNumber(getField(detalhe, 'largura_cm'))   : undefined} />
-                  <DetalheLinha rotulo="Espessura" valor={dimVisible(detalhe.tipo_produto, 'espessura_cm') ? formatPtNumber(getField(detalhe, 'espessura_cm')) : undefined} />
-                  <DetalheLinha rotulo="Batente"   valor={batenteColVisible(detalhe.tipo_produto) ? medidaTexto(getField(detalhe, 'batente_cm')) : undefined} />
+                  <DetalheLinha rotulo="Altura"    valor={seAplica(detalhe.tipo_produto, 'altura_cm', aplicabilidade)    ? formatPtNumber(getField(detalhe, 'altura_cm'))    : undefined} />
+                  <DetalheLinha rotulo="Largura"   valor={seAplica(detalhe.tipo_produto, 'largura_cm', aplicabilidade)   ? formatPtNumber(getField(detalhe, 'largura_cm'))   : undefined} />
+                  <DetalheLinha rotulo="Espessura" valor={seAplica(detalhe.tipo_produto, 'espessura_cm', aplicabilidade) ? formatPtNumber(getField(detalhe, 'espessura_cm')) : undefined} />
+                  <DetalheLinha rotulo="Batente"   valor={seAplica(detalhe.tipo_produto, 'batente_cm', aplicabilidade) ? medidaTexto(getField(detalhe, 'batente_cm')) : undefined} />
                   <DetalheLinha rotulo="Batente (tipo)" valor={detalhe.batente_tipo} />
                   <DetalheLinha
                     rotulo="Alizar L × A × E"
                     valor={
-                      !alizarColVisible(detalhe.tipo_produto) ? undefined
+                      !seAplica(detalhe.tipo_produto, 'alizar', aplicabilidade) ? undefined
                       : getField(detalhe, 'alizar_l') === 0 || getField(detalhe, 'alizar_a') === 0 ? 'não tem'
                       : [getField(detalhe, 'alizar_l'), getField(detalhe, 'alizar_a'), detalhe.alizar_e]
                           .map(v => formatPtNumber(v) || '—').join(' × ')

@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { camposFaltando, situacaoCorreta } from '@/lib/completude';
+import { camposFaltando, situacaoCorreta, montarAplicabilidade, seAplica, APLICABILIDADE_PADRAO } from '@/lib/completude';
 import { Produto } from '@/types/database';
 
 /** Produto com tudo vazio; cada teste preenche só o que interessa. */
@@ -97,6 +97,44 @@ describe('produto sem tipo definido', () => {
   });
 });
 
+describe('aplicabilidade vinda da tabela', () => {
+  const rodape = produto({
+    tipo_produto: 'RODAPE', revestimento: 'Lacca Touch', perfil: 'LISA', cor: 'URBAN',
+    protect_plus: 'Não', veneziana: 'Não', visor: 'Não',
+    altura_cm: 240, largura_cm: 7, espessura_cm: 0.8,
+  });
+
+  it('declarar os campos fecha o RODAPE, que antes nunca fechava', () => {
+    expect(situacaoCorreta(rodape)).toBe('pendente');
+
+    const apl = montarAplicabilidade([
+      { tipo_produto: 'RODAPE', campo: 'movimento' },
+      { tipo_produto: 'RODAPE', campo: 'enchimento' },
+      { tipo_produto: 'RODAPE', campo: 'linha' },
+      { tipo_produto: 'RODAPE', campo: 'batente_cm' },
+      { tipo_produto: 'RODAPE', campo: 'alizar' },
+    ]);
+    expect(camposFaltando(rodape, apl)).toEqual([]);
+    expect(situacaoCorreta(rodape, apl)).toBe('classificado');
+  });
+
+  it('tabela vazia ou indisponível cai no padrão, sem mudar comportamento', () => {
+    expect(montarAplicabilidade([])).toBe(APLICABILIDADE_PADRAO);
+    expect(montarAplicabilidade(null)).toBe(APLICABILIDADE_PADRAO);
+  });
+
+  it('compara o tipo sem depender de caixa ou espaço', () => {
+    const apl = montarAplicabilidade([{ tipo_produto: ' rodape ', campo: 'movimento' }]);
+    expect(seAplica('RODAPE', 'movimento', apl)).toBe(false);
+    expect(seAplica('RODAPE', 'cor', apl)).toBe(true);
+  });
+
+  it('tipo não declarado é cobrado por tudo', () => {
+    const apl = montarAplicabilidade([{ tipo_produto: 'RODAPE', campo: 'movimento' }]);
+    expect(seAplica('KIT PORTA', 'movimento', apl)).toBe(true);
+  });
+});
+
 describe('RODAPE — limitação conhecida das regras atuais', () => {
   it('exige atributos de porta (movimento, enchimento, linha) e por isso nunca fecha', () => {
     // 1001835 RODAPE LS RETO LACCA TOUCH URBAN — completo do ponto de vista do produto
@@ -105,9 +143,8 @@ describe('RODAPE — limitação conhecida das regras atuais', () => {
       protect_plus: 'Não', veneziana: 'Não', visor: 'Não',
       altura_cm: 240, largura_cm: 7, espessura_cm: 0.8,
     });
-    // Documenta o comportamento de hoje: só ALIZAR e BATENTE têm campos declarados
-    // como "não se aplica". Se rodapé não deve movimento/enchimento/linha, isso
-    // precisa ser declarado nas regras de aplicabilidade.
+    // Sem declarar nada, o padrão embutido segue cobrando os três campos — é o
+    // estado de quem ainda não configurou a aba "Campos por Tipo".
     expect(camposFaltando(p)).toEqual(['movimento', 'enchimento', 'linha']);
     expect(situacaoCorreta(p)).toBe('pendente');
   });

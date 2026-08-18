@@ -221,3 +221,18 @@ classificados não têm origem registrada e a Revisão os ignora):
   pendente não aparece no portal do representante. Combine o horário.
 - **Rollback:** `ALTER TABLE concremprodutos_produtos DROP COLUMN campos_regra;` desfaz
   a coluna, mas **não** restaura a classificação apagada no passo 4 — só o backup faz isso.
+
+### M5. Campos por tipo (aplicabilidade) — `20260805000001_aplicabilidade_campos.sql`
+Cria `concremprodutos_aplicabilidade`: cada linha diz que um campo **não se aplica**
+a um tipo. Sai do código e passa a ser gerenciado na aba **Campos por Tipo**.
+
+O seed reproduz o que estava fixo (ALIZAR, BATENTE, PORTA) e acrescenta o RODAPE
+— que era cobrado por movimento, enchimento e linha e por isso nunca fechava.
+
+- **Enquanto não aplicada:** a tela cai no padrão embutido, idêntico ao comportamento
+  anterior; a aba nova aparece vazia. Nada quebra.
+- **Efeito imediato:** vale para produto novo e antigo, sem precisar reclassificar —
+  a completude é recalculada na leitura. Depois de aplicar, use **Corrigir status**
+  (ou Aplicar Regras) para gravar a situação nova dos RODAPE.
+- **Verificação:** `SELECT tipo_produto, count(*) FROM concremprodutos_aplicabilidade GROUP BY 1;`
+- **Rollback:** `DROP TABLE concremprodutos_aplicabilidade;` (volta ao padrão embutido).
