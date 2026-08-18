@@ -186,3 +186,13 @@ Adiciona `concremprodutos_produtos.ativo` (default `true`), o índice parcial e
 - **Rollback:** `DROP INDEX idx_concremprodutos_produtos_ativo;` e
   `ALTER TABLE concremprodutos_produtos DROP COLUMN ativo;` — a view precisa ser
   recriada sem `AND ativo` **antes** do drop da coluna.
+
+### M3. Opção de classificação sem duplicata — `20260804000002_opcoes_sem_duplicata.sql`
+Índice único em `(campo, upper(valor))` na tabela de opções.
+
+- **Enquanto não aplicada:** a tela já bloqueia a duplicata ao salvar (e ignorando
+  acento, o que o índice não faz); falta só a garantia contra gravação concorrente
+  ou `INSERT` direto por SQL.
+- **Atenção:** se já existirem duplicatas, o `CREATE UNIQUE INDEX` **falha**. Rode
+  primeiro a consulta do PASSO 1 no arquivo, limpe as sobrando e repita.
+- **Rollback:** `DROP INDEX ux_concremprodutos_opcoes_campo_valor;`

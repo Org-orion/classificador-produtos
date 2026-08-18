@@ -13,8 +13,8 @@ import { Badge } from '@/components/ui/badge';
 import { useToast } from '@/hooks/use-toast';
 import { Plus, Pencil, Loader2, Trash2, ChevronUp, ChevronDown, ChevronsUpDown } from 'lucide-react';
 import { cn } from '@/lib/utils';
-import { normalizePtNumberText } from '@/lib/numbers';
-import { casaBusca } from '@/lib/busca';
+import { normalizePtNumberText, parsePtNumber, formatPtNumber } from '@/lib/numbers';
+import { casaBusca, normalizaBusca } from '@/lib/busca';
 import { BuscaInput } from '@/components/BuscaInput';
 
 const CAMPOS_LABEL: Record<string, string> = {
@@ -198,7 +198,12 @@ function OpcoesTab({ opcoes, onRefresh, toast }: { opcoes: OpcaoClassificacao[];
     casaBusca(busca, o.valor)
   );
   const grouped = campos.reduce((acc, c) => {
-    acc[c] = visiveis.filter(o => o.campo === c);
+    const lista = visiveis.filter(o => o.campo === c);
+    // Campo numérico vinha ordenado como texto — 7.5 e 92 caíam depois de 240.
+    // Maior primeiro, que é a ordem em que se procura uma medida.
+    acc[c] = CAMPOS_NUMERICOS.has(c)
+      ? [...lista].sort((a, b) => (parsePtNumber(b.valor) ?? 0) - (parsePtNumber(a.valor) ?? 0))
+      : lista;
     return acc;
   }, {} as Record<string, OpcaoClassificacao[]>);
   const camposComResultado = campos.filter(c => grouped[c].length > 0);
@@ -211,9 +216,36 @@ function OpcoesTab({ opcoes, onRefresh, toast }: { opcoes: OpcaoClassificacao[];
 
   const isNumericCampo = (c: string) => CAMPOS_NUMERICOS.has(c);
 
+  /**
+   * Já existe essa opção no campo? Compara pelo valor normalizado: em campo
+   * numérico "7,5" e "7.5" são a mesma medida; em texto, "Branco" e "BRANCO"
+   * são a mesma cor. Ignora o próprio item quando se está editando.
+   */
+  const jaExiste = (campoAlvo: string, valorBruto: string, ignorarId?: string) => {
+    const bruto = valorBruto.trim();
+    if (!bruto) return false;
+    const numerico = isNumericCampo(campoAlvo);
+    const alvo = numerico ? parsePtNumber(bruto) : normalizaBusca(bruto);
+    if (alvo === null) return false;
+    return opcoes.some(o =>
+      o.campo === campoAlvo &&
+      o.id !== ignorarId &&
+      (numerico ? parsePtNumber(o.valor) === alvo : normalizaBusca(o.valor) === alvo));
+  };
+
+  const duplicado = jaExiste(campo, valor, editItem?.id);
+
   const save = async () => {
-    setSaving(true);
     const raw = valor.trim();
+    if (jaExiste(campo, raw, editItem?.id)) {
+      toast({
+        title: 'Essa opção já existe',
+        description: `"${raw}" já está cadastrado em ${CAMPOS_LABEL[campo]}.`,
+        variant: 'destructive',
+      });
+      return;
+    }
+    setSaving(true);
     const valorToSave = isNumericCampo(campo) ? normalizePtNumberText(raw) : raw;
     if (isNumericCampo(campo) && !valorToSave) {
       setSaving(false);
@@ -297,7 +329,9 @@ function OpcoesTab({ opcoes, onRefresh, toast }: { opcoes: OpcaoClassificacao[];
             <div className="flex flex-wrap gap-1.5 p-2">
               {grouped[c].length ? grouped[c].map(o => (
                 <div key={o.id} className="flex items-center gap-1 rounded-md border bg-background py-1 pl-2 pr-1 text-xs">
-                  <span className={o.ativo ? '' : 'text-muted-foreground line-through'}>{o.valor}</span>
+                  <span className={o.ativo ? '' : 'text-muted-foreground line-through'}>
+                    {CAMPOS_NUMERICOS.has(c) ? formatPtNumber(parsePtNumber(o.valor)) || o.valor : o.valor}
+                  </span>
                   <Switch checked={o.ativo} onCheckedChange={() => toggleAtivo(o)} className="scale-[0.6]" />
                   <Button variant="ghost" size="icon" className="h-5 w-5" onClick={() => openEdit(o)}>
                     <Pencil className="h-3 w-3" />
@@ -336,12 +370,18 @@ function OpcoesTab({ opcoes, onRefresh, toast }: { opcoes: OpcaoClassificacao[];
                 onChange={e => setValor(e.target.value)}
                 placeholder={isNumericCampo(campo) ? 'Ex: 210 ou 3,5' : 'Ex: Dupla, Semi-oca...'}
                 inputMode={isNumericCampo(campo) ? 'decimal' : undefined}
+                className={cn(duplicado && 'border-destructive')}
               />
+              {duplicado && (
+                <p className="mt-1 text-xs text-destructive">
+                  Já existe em {CAMPOS_LABEL[campo]}.
+                </p>
+              )}
             </div>
           </div>
           <DialogFooter>
             <Button variant="outline" onClick={() => setOpen(false)}>Cancelar</Button>
-            <Button onClick={save} disabled={saving || !valor.trim()}>{saving ? <Loader2 className="h-4 w-4 animate-spin" /> : 'Salvar'}</Button>
+            <Button onClick={save} disabled={saving || !valor.trim() || duplicado}>{saving ? <Loader2 className="h-4 w-4 animate-spin" /> : 'Salvar'}</Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
