@@ -196,3 +196,28 @@ Adiciona `concremprodutos_produtos.ativo` (default `true`), o índice parcial e
 - **Atenção:** se já existirem duplicatas, o `CREATE UNIQUE INDEX` **falha**. Rode
   primeiro a consulta do PASSO 1 no arquivo, limpe as sobrando e repita.
 - **Rollback:** `DROP INDEX ux_concremprodutos_opcoes_campo_valor;`
+
+### M4. Origem dos campos + reset da classificação — `20260805000000_origem_campos.sql`
+Adiciona `concremprodutos_produtos.campos_regra` (text[], default `{}`), que registra
+quais campos foram preenchidos pelo motor. Edição manual remove o campo da lista.
+É o que sustenta o botão **Revisão**.
+
+Sequência completa (a migration sozinha não basta — sem o reset, os produtos já
+classificados não têm origem registrada e a Revisão os ignora):
+
+1. **Backup** (Supabase → Database → Backups). O reset não tem undo.
+2. Aplicar a migration M4.
+3. Publicar o frontend com o suporte a `campos_regra` (senão o Aplicar Regras não
+   grava a origem).
+4. Rodar `scripts/reset-classificacao.sql` — zera os campos de regra e devolve todo
+   mundo para `pendente`. **Leia os passos 1 e 2 do arquivo antes**: ele não limpa
+   `tipo_produto` de propósito, porque nos produtos importados esse campo veio do
+   parser, que não roda no Aplicar Regras.
+5. Na tela: **Aplicar Regras**, aba aberta até o fim.
+6. Conferir: `SELECT count(*) FROM concremprodutos_produtos WHERE campos_regra <> '{}';`
+   deve bater com o total de produtos classificados.
+
+- **Janela:** entre o passo 4 e o fim do 5 os produtos ficam pendentes, e produto
+  pendente não aparece no portal do representante. Combine o horário.
+- **Rollback:** `ALTER TABLE concremprodutos_produtos DROP COLUMN campos_regra;` desfaz
+  a coluna, mas **não** restaura a classificação apagada no passo 4 — só o backup faz isso.

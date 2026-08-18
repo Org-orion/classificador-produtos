@@ -2709,6 +2709,7 @@ export type Database = {
           batente_cm: number | null
           batente_tipo: string | null
           categoria_id: string | null
+          campos_regra: string[]
           codigo: string | null
           codigo_barras: string | null
           cor: string | null
@@ -2741,6 +2742,7 @@ export type Database = {
           batente_cm?: number | null
           batente_tipo?: string | null
           categoria_id?: string | null
+          campos_regra?: string[]
           codigo?: string | null
           codigo_barras?: string | null
           cor?: string | null
@@ -2773,6 +2775,7 @@ export type Database = {
           batente_cm?: number | null
           batente_tipo?: string | null
           categoria_id?: string | null
+          campos_regra?: string[]
           codigo?: string | null
           codigo_barras?: string | null
           cor?: string | null

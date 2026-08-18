@@ -15,12 +15,13 @@ import {
   DropdownMenuItem, DropdownMenuLabel, DropdownMenuSeparator, DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
 import { useToast } from '@/hooks/use-toast';
-import { Loader2, Wand2, Upload, Save, ChevronLeft, ChevronRight, ChevronUp, ChevronDown, ChevronsUpDown, Columns3, SlidersHorizontal, X } from 'lucide-react';
+import { Loader2, Wand2, Upload, Save, ChevronLeft, ChevronRight, ChevronUp, ChevronDown, ChevronsUpDown, Columns3, SlidersHorizontal, X, RefreshCw } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { formatPtNumber, parsePtNumber } from '@/lib/numbers';
 import { casaRegraAtributo } from '@/lib/match-regras';
 import { casaBusca } from '@/lib/busca';
 import { emLotes, agruparPorAtualizacao } from '@/lib/lotes';
+import { marcarRegra, marcarManual, limparCamposDeRegra } from '@/lib/origem';
 import {
   ATTR_FIELDS, DIM_FIELDS, type AttrField, isBlank, inativo,
   attrVisible, dimVisible, alizarColVisible, batenteColVisible,
@@ -189,6 +190,7 @@ export default function Classificacao() {
   const [fClassif, setFClassif] = useState('');
   const [fUso, setFUso] = useState('ativos');   // produtos fora de linha ficam fora por padrão
   const [busca, setBusca] = useState('');
+  const [showRevisao, setShowRevisao] = useState(false);
   const [showImport, setShowImport] = useState(false);
   const [importJson, setImportJson] = useState('');
   const [importing, setImporting] = useState(false);
@@ -323,6 +325,11 @@ export default function Classificacao() {
     [filtered],
   );
 
+  const comOrigemRegra = useMemo(
+    () => produtos.filter(p => !inativo(p) && (p.campos_regra?.length ?? 0) > 0).length,
+    [produtos],
+  );
+
   // Status gravado em desacordo com a completude, separado por direção: promover
   // é seguro; rebaixar tira o produto do portal, então é decisão do usuário.
   const desalinhados = useMemo(() => {
@@ -410,6 +417,8 @@ export default function Classificacao() {
     // situação vem da completude do produto já com as edições aplicadas
     const updatePayload: any = { ...(m || {}) };
     updatePayload.situacao = situacaoCorreta({ ...prod, ...(m || {}) } as Produto);
+    // o que foi mexido à mão deixa de ser de regra — Revisão não toca mais nele
+    updatePayload.campos_regra = marcarManual(prod.campos_regra, Object.keys(m || {}));
 
     const { error } = await supabase
       .from('concremprodutos_produtos')
@@ -521,6 +530,7 @@ export default function Classificacao() {
       const prod = produtos.find(pp => pp.id === id);
       const updatePayload: any = { ...m };
       updatePayload.situacao = situacaoCorreta({ ...(prod || {}), ...m } as Produto);
+      updatePayload.campos_regra = marcarManual(prod?.campos_regra, Object.keys(m));
       const { error } = await supabase
         .from('concremprodutos_produtos')
         .update(updatePayload)
@@ -532,11 +542,43 @@ export default function Classificacao() {
     loadData();
   };
 
-  const runAutoClassify = async () => {
+  /**
+   * Revisão: limpa o que veio de regra e reaplica tudo. É o que faz uma regra
+   * apagada ou alterada refletir nos produtos — o motor normal só preenche
+   * campo vazio, então sem esta limpeza o valor antigo ficaria para sempre.
+   * Campo editado à mão não está em `campos_regra` e não é tocado.
+   */
+  const limparOrigemRegra = async (lista: Produto[]) => {
+    const grupos = agruparPorAtualizacao(lista.filter(p => !inativo(p)), p => {
+      const limpeza = limparCamposDeRegra(p.campos_regra);
+      return limpeza ? { ...limpeza, situacao: 'pendente' } : {};
+    });
+    let limpos = 0;
+    for (const { updates, itens } of grupos) {
+      for (const lote of emLotes(itens, LOTE_UPDATE)) {
+        const { error } = await supabase
+          .from('concremprodutos_produtos')
+          .update(updates)
+          .in('id', lote.map(p => p.id));
+        if (error) continue;
+        for (const p of lote) {
+          Object.assign(p, updates);
+          limpos++;
+        }
+      }
+    }
+    return limpos;
+  };
+
+  const runAutoClassify = async ({ revisao = false }: { revisao?: boolean } = {}) => {
     setAutoLoading(true);
     setAutoResult(null);
-    setEtapa('carregando regras…');
+    setEtapa(revisao ? 'limpando o que veio de regra…' : 'carregando regras…');
     try {
+      if (revisao) {
+        const limpos = await limparOrigemRegra(produtos);
+        setEtapa(`revisão: ${limpos.toLocaleString('pt-BR')} produtos limpos — reaplicando`);
+      }
       // Fetch both rule types in parallel
       const [regras, raRes] = await Promise.all([
         fetchAllRegras(),
@@ -577,16 +619,23 @@ export default function Classificacao() {
         if (numericFields.has(regra.campo) && valueToSet === null) continue;
 
         // Gravação em lote: com "não contém" o alvo é o catálogo todo, e um UPDATE
-        // por produto deixaria "Aplicar Regras" inviável.
-        for (const lote of emLotes(matched, LOTE_UPDATE)) {
-          const { error } = await supabase
-            .from('concremprodutos_produtos')
-            .update({ [regra.campo]: valueToSet })
-            .in('id', lote.map(p => p.id));
-          if (error) continue;
-          for (const p of lote) {
-            (p as any)[regra.campo] = valueToSet;
-            attrCount++;
+        // por produto deixaria "Aplicar Regras" inviável. O payload leva também a
+        // origem do campo, e o agrupamento junta quem fica com a mesma lista.
+        const grupos = agruparPorAtualizacao(matched, p => ({
+          [regra.campo]: valueToSet,
+          campos_regra: marcarRegra(p.campos_regra, [regra.campo]),
+        }));
+        for (const { updates, itens } of grupos) {
+          for (const lote of emLotes(itens, LOTE_UPDATE)) {
+            const { error } = await supabase
+              .from('concremprodutos_produtos')
+              .update(updates)
+              .in('id', lote.map(p => p.id));
+            if (error) continue;
+            for (const p of lote) {
+              Object.assign(p, updates);
+              attrCount++;
+            }
           }
         }
       }
@@ -603,7 +652,13 @@ export default function Classificacao() {
       // agrupamos por payload idêntico: em vez de um UPDATE por produto — inviável
       // numa carga grande — sai um UPDATE por combinação distinta de medidas.
       const gravarMedidas = async (lista: Produto[], calcular: (p: Produto) => Record<string, number | null>) => {
-        for (const { updates, itens } of agruparPorAtualizacao(lista, calcular)) {
+        const comOrigem = (p: Produto) => {
+          const medidas = calcular(p);
+          const campos = Object.keys(medidas);
+          if (campos.length === 0) return {};
+          return { ...medidas, campos_regra: marcarRegra(p.campos_regra, campos) };
+        };
+        for (const { updates, itens } of agruparPorAtualizacao(lista, comOrigem)) {
           for (const lote of emLotes(itens, LOTE_UPDATE)) {
             const { error } = await supabase
               .from('concremprodutos_produtos')
@@ -612,7 +667,7 @@ export default function Classificacao() {
             if (error) continue;
             for (const p of lote) {
               Object.assign(p, updates);
-              attrCount += Object.keys(updates).length;
+              attrCount += Object.keys(updates).length - 1;   // desconta campos_regra
             }
           }
         }
@@ -652,34 +707,33 @@ export default function Classificacao() {
       // 1c) Default Protect+, Veneziana, Visor = 'Não' when still null
       setEtapa('3/5 — padrões (Protect+, veneziana, visor, movimento)');
       const defaultNao = ['protect_plus', 'veneziana', 'visor'] as const;
-      for (const campo of defaultNao) {
-        const semValor = produtos.filter(p => !inativo(p) && !(p as any)[campo]);
-        for (const lote of emLotes(semValor, LOTE_UPDATE)) {
-          const { error } = await supabase
-            .from('concremprodutos_produtos')
-            .update({ [campo]: 'Não' })
-            .in('id', lote.map(p => p.id));
-          if (error) continue;
-          for (const p of lote) {
-            (p as any)[campo] = 'Não';
-            attrCount++;
+      // O padrão também é decisão do motor, então conta como origem "regra".
+      const gravarPadrao = async (lista: Produto[], campo: string, valor: string) => {
+        const grupos = agruparPorAtualizacao(lista, p => ({
+          [campo]: valor,
+          campos_regra: marcarRegra(p.campos_regra, [campo]),
+        }));
+        for (const { updates, itens } of grupos) {
+          for (const lote of emLotes(itens, LOTE_UPDATE)) {
+            const { error } = await supabase
+              .from('concremprodutos_produtos')
+              .update(updates)
+              .in('id', lote.map(p => p.id));
+            if (error) continue;
+            for (const p of lote) {
+              Object.assign(p, updates);
+              attrCount++;
+            }
           }
         }
+      };
+
+      for (const campo of defaultNao) {
+        await gravarPadrao(produtos.filter(p => !inativo(p) && !(p as any)[campo]), campo, 'Não');
       }
 
       // 1d) Default movimento = GIRO when no rule filled it (only KIT PORTA / PORTA)
-      const semMovimento = produtos.filter(shouldDefaultMovimento);
-      for (const lote of emLotes(semMovimento, LOTE_UPDATE)) {
-        const { error } = await supabase
-          .from('concremprodutos_produtos')
-          .update({ movimento: 'GIRO' })
-          .in('id', lote.map(p => p.id));
-        if (error) continue;
-        for (const p of lote) {
-          p.movimento = 'GIRO';
-          attrCount++;
-        }
-      }
+      await gravarPadrao(produtos.filter(shouldDefaultMovimento), 'movimento', 'GIRO');
 
       // 2) Apply CATEGORY rules
       // Não mexe mais em `situacao`: quem decide isso é a completude, no passo 3.
@@ -873,7 +927,10 @@ export default function Classificacao() {
           <Button variant="outline" size="sm" onClick={() => setShowImport(true)}>
             <Upload className="mr-1 h-4 w-4" /> Importar JSON
           </Button>
-          <Button size="sm" onClick={runAutoClassify} disabled={autoLoading}>
+          <Button variant="outline" size="sm" onClick={() => setShowRevisao(true)} disabled={autoLoading}>
+            <RefreshCw className="mr-1 h-4 w-4" /> Revisão
+          </Button>
+          <Button size="sm" onClick={() => runAutoClassify()} disabled={autoLoading}>
             {autoLoading ? <Loader2 className="mr-1 h-4 w-4 animate-spin" /> : <Wand2 className="mr-1 h-4 w-4" />}
             Aplicar Regras
           </Button>
@@ -1314,6 +1371,45 @@ export default function Classificacao() {
           )}
         </SheetContent>
       </Sheet>
+
+      {/* Revisão: confirma antes, porque reescreve o catálogo inteiro */}
+      <Dialog open={showRevisao} onOpenChange={setShowRevisao}>
+        <DialogContent>
+          <DialogHeader><DialogTitle>Revisão geral das regras</DialogTitle></DialogHeader>
+          <div className="space-y-3 text-sm">
+            <p>
+              Serve para quando uma regra foi <strong>alterada ou apagada</strong>. O motor normal
+              só preenche campo vazio, então o valor antigo ficaria para sempre; a revisão limpa e
+              refaz.
+            </p>
+            <div className="rounded-md border bg-muted/40 px-3 py-2">
+              <p className="font-medium">O que vai acontecer</p>
+              <ol className="ml-4 list-decimal space-y-0.5 text-muted-foreground">
+                <li>Limpa os campos que <strong>vieram de regra</strong> ({comOrigemRegra.toLocaleString('pt-BR')} produto(s)).</li>
+                <li>Reaplica todas as regras ativas e os padrões.</li>
+                <li>Recalcula a situação de cada produto.</li>
+              </ol>
+            </div>
+            <p className="text-muted-foreground">
+              O que você editou à mão <strong>não é tocado</strong> — ao salvar na tela, o campo
+              deixa de contar como de regra.
+            </p>
+            <p className="text-amber-700">
+              Durante a revisão os produtos ficam pendentes por alguns instantes, e produto pendente
+              não aparece no portal do representante. Rode em horário combinado.
+            </p>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setShowRevisao(false)}>Cancelar</Button>
+            <Button
+              onClick={() => { setShowRevisao(false); runAutoClassify({ revisao: true }); }}
+              disabled={autoLoading}
+            >
+              Revisar agora
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       {/* Import Dialog */}
       <Dialog open={showImport} onOpenChange={setShowImport}>

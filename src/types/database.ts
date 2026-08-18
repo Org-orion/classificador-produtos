@@ -49,6 +49,9 @@ export interface Produto {
   /** false = produto fora de linha. Opcional: pode não existir em bases sem a
    *  migration 20260804000001 aplicada — trate `undefined` como ativo. */
   ativo?: boolean;
+  /** Campos preenchidos pelo motor de regras (migration 20260805000000).
+   *  Edição manual remove o campo daqui. Vazio/undefined = nada de regra. */
+  campos_regra?: string[] | null;
   created_at: string;
   updated_at: string;
 }
