@@ -88,6 +88,31 @@ describe('KIT PORTA — exige tudo, incluindo batente e alizar', () => {
   });
 });
 
+describe('PORTA e FOLHA — a folha vendida sozinha', () => {
+  const base = {
+    movimento: 'GIRO', enchimento: 'Sarrafo 3mm', revestimento: 'Lacca Touch',
+    linha: 'Essenziale', perfil: 'LISA', cor: 'BIANCO',
+    protect_plus: 'Não', veneziana: 'Não', visor: 'Não',
+    altura_cm: 210, largura_cm: 80, espessura_cm: 3.5,
+  };
+
+  it('PORTA fecha sem batente e sem alizar', () => {
+    const p = produto({ ...base, tipo_produto: 'PORTA' });
+    expect(camposFaltando(p)).toEqual([]);
+    expect(situacaoCorreta(p)).toBe('classificado');
+  });
+
+  it('FOLHA é tratada como PORTA, e não é cobrada por batente nem alizar', () => {
+    const p = produto({ ...base, tipo_produto: 'FOLHA' });
+    expect(camposFaltando(p)).toEqual([]);
+  });
+
+  it('KIT PORTA, ao contrário, é cobrado pelos dois', () => {
+    const p = produto({ ...base, tipo_produto: 'KIT PORTA' });
+    expect(camposFaltando(p)).toEqual(['batente_cm', 'alizar']);
+  });
+});
+
 describe('produto sem tipo definido', () => {
   it('cobra todos os campos, porque sem o tipo não se sabe o que se aplica', () => {
     const faltando = camposFaltando(produto({}));

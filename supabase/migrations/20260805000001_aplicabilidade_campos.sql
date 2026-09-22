@@ -58,8 +58,9 @@ VALUES
   ('BATENTE', 'visor'), ('BATENTE', 'altura_cm'), ('BATENTE', 'batente_cm'),
   ('BATENTE', 'alizar'),
 
-  -- PORTA: a folha sozinha não leva batente nem alizar
+  -- PORTA e FOLHA: a folha sozinha não leva batente nem alizar
   ('PORTA', 'batente_cm'), ('PORTA', 'alizar'),
+  ('FOLHA', 'batente_cm'), ('FOLHA', 'alizar'),
 
   -- RODAPE: não abre, não tem enchimento nem linha de porta
   ('RODAPE', 'movimento'), ('RODAPE', 'enchimento'), ('RODAPE', 'linha'),

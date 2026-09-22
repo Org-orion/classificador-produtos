@@ -38,6 +38,7 @@ export const APLICABILIDADE_PADRAO: Aplicabilidade = {
   BATENTE: new Set(['movimento', 'enchimento', 'linha', 'perfil', 'protect_plus',
                     'veneziana', 'visor', 'altura_cm', 'batente_cm', 'alizar']),
   PORTA:  new Set(['batente_cm', 'alizar']),
+  FOLHA:  new Set(['batente_cm', 'alizar']),
   RODAPE: new Set(['batente_cm', 'alizar']),
 };
 

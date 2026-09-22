@@ -601,12 +601,19 @@ export default function Classificacao() {
         return (t === 'KIT PORTA' || t === 'PORTA') && !p.movimento;
       };
 
-      // 1) Apply ATTRIBUTE rules first
+      /**
+       * Regras de atributo. Roda DEPOIS da leitura das medidas, de propósito:
+       * regra casa por trecho de texto e é ambígua para dimensão — numa descrição
+       * "210x60x3,5CM" tanto "x60" quanto "x3,5CM" casam com Largura, e quem vence
+       * é o acaso da ordem. A leitura por posição é exata; a regra fica de reserva
+       * para descrição que o parser não consegue ler.
+       */
+      const aplicarRegrasAtributo = async () => {
       let regraAtual = 0;
       for (const regra of regrasAtributo) {
         regraAtual++;
         if (regraAtual % 5 === 1) {
-          setEtapa(`1/5 — regras de atributo (${regraAtual} de ${regrasAtributo.length})`);
+          setEtapa(`2/5 — regras de atributo (${regraAtual} de ${regrasAtributo.length})`);
           await new Promise(r => setTimeout(r, 0));   // deixa a tela repintar
         }
         const numericFields = new Set<string>([...DIM_FIELDS, 'batente_cm', 'alizar_l', 'alizar_a', 'alizar_e', 'preco']);
@@ -645,6 +652,7 @@ export default function Classificacao() {
           }
         }
       }
+      };
 
       // Só considera vazio o que é null/undefined: medida 0 = "não tem", declarada
       // por regra "não contém", e não deve ser sobrescrita pelo parser.
@@ -680,7 +688,22 @@ export default function Classificacao() {
       };
 
       const ativos = produtos.filter(p => !inativo(p));
-      setEtapa(`2/5 — medidas pela descrição (${ativos.length.toLocaleString('pt-BR')} produtos)`);
+      setEtapa(`1/5 — medidas pela descrição (${ativos.length.toLocaleString('pt-BR')} produtos)`);
+
+      // Medidas da folha: altura × largura × espessura, lidas por POSIÇÃO no
+      // trecho 210x80x3,5CM. Vale para os três tipos que têm folha. Sem isto,
+      // essas três medidas ficavam por conta das regras de trecho, que confundem
+      // a largura com a espessura.
+      const comFolha = ativos.filter(p =>
+        tipoEh(p, 'KIT PORTA') || tipoEh(p, 'PORTA') || tipoEh(p, 'FOLHA'));
+      await gravarMedidas(comFolha, p => {
+        const parsed = parseProduto(p.descricao);
+        const u: Record<string, number | null> = {};
+        if (porPreencher(p, 'altura_cm',    parsed.altura_cm))    u.altura_cm    = parsed.altura_cm;
+        if (porPreencher(p, 'largura_cm',   parsed.largura_cm))   u.largura_cm   = parsed.largura_cm;
+        if (porPreencher(p, 'espessura_cm', parsed.espessura_cm)) u.espessura_cm = parsed.espessura_cm;
+        return u;
+      });
 
       await gravarMedidas(ativos.filter(p => tipoEh(p, 'KIT PORTA')), p => {
         const parsed = parseProduto(p.descricao);
@@ -709,6 +732,8 @@ export default function Classificacao() {
         if (porPreencher(p, 'espessura_cm', parsed.espessura_cm)) u.espessura_cm = parsed.espessura_cm;
         return u;
       });
+
+      await aplicarRegrasAtributo();
 
       // 1c) Default Protect+, Veneziana, Visor = 'Não' when still null
       setEtapa('3/5 — padrões (Protect+, veneziana, visor, movimento)');
