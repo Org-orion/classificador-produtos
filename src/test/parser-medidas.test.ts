@@ -41,6 +41,18 @@ describe('medidas da folha lidas por posição', () => {
     expect(parseProduto('PORTA … 210x90x3,5CM').altura_cm).toBe(210);
   });
 
+  // Regra de negócio confirmada pelo Kaio em 22/09/2026: a altura é sempre o
+  // número da frente, mesmo quando menor que a largura. Existem portas baixas.
+  it('primeiro número é a altura mesmo quando menor que a largura', () => {
+    const p = parseProduto('PORTA ESSENZIALE LISA SOLIDA LACCA TOUCH BIANCO MTX 70x72x3,5CM');
+    expect(p.altura_cm).toBe(70);
+    expect(p.largura_cm).toBe(72);
+
+    const q = parseProduto('PORTA INNOVAZIONE LISA SEMI-OCA LACCA TOUCH BIANCO MTX 104x110x3,5CM');
+    expect(q.altura_cm).toBe(104);
+    expect(q.largura_cm).toBe(110);
+  });
+
   it('o batente do kit não é confundido com as medidas da folha', () => {
     const p = parseProduto('KIT PORTA LS SARR. 3MM UV BRANCO 210x60x3,5CM(Bat7,5CM AL7x8,5CM CAB.10CM)');
     expect(p.batente_cm).toBe(7.5);

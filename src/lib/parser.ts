@@ -61,7 +61,12 @@ export function parseProduto(descricao: string) {
     }
 
   } else {
-    // KIT PORTA / PORTA / FOLHA: 3 partes padrão
+    // KIT PORTA / PORTA / FOLHA: 3 partes padrão.
+    //
+    // A ALTURA É SEMPRE O PRIMEIRO NÚMERO, qualquer que seja o valor: em
+    // "70x72x3,5CM" a altura é 70 e a largura 72, e está certo — existem portas
+    // baixas no catálogo. Não "corrija" invertendo quando a altura sair menor que
+    // a largura; se os números vierem trocados, o erro está na descrição.
     const m = baseDescricao.match(/(\d{2,3})x(\d{2,3})x(\d+[,.]?\d*)CM/i);
     if (m) {
       altura_cm    = parseFloat(m[1]);
